@@ -13,6 +13,7 @@ import math
 import json
 import shutil
 import time
+from multiprocessing import Pool
 
 import pandas as pd
 import numpy as np
@@ -27,7 +28,7 @@ from scipy.stats import qmc
 class LazyOpt(list):
     '''
     TODO:
-    1. genralise this class to pass in any 'function_call'
+    1. genralise this class to pass in any 'function_call' and handle any number of objectives f1,f2...
     2. multiprocessing
     3. saving and loading results
     4. write docs on how to use this and not break it
@@ -92,13 +93,13 @@ class LazyOpt(list):
         else:
             print(f"feasible      :       [X]")
 
-        self.physically_feasible.append(feasible)
-        self.f1.append(f1)
-        return feasible
+        return feasible, f1
 
     def seeding(self, x):
         self.x_seed = x
-        feasible = self.function_call(x)
+        feasible, f1 = self.function_call(x)
+        self.physically_feasible.append(feasible)
+        self.f1.append(f1)
         self.f_seed = np.array([[feasible]])
         return
 
@@ -204,7 +205,9 @@ class LazyOpt(list):
         f = empty([number_of_samples, 1])
         for i in range(0, number_of_samples):
             x[i, :] = space[i, :]
-            f[i, :] = self.function_call(array([x[i, :]]))
+            f[i, :], f1 = self.function_call(array([x[i, :]]))
+            self.physically_feasible.append(f[i, :])
+            self.f1.append(f1)
             print(f'sampling {i + 1}/{number_of_samples}')
         return x, f
 
@@ -244,7 +247,8 @@ class LazyOpt(list):
         res = hyper_params[4]
         k = hyper_params[5]
         dims = hyper_params[6]
-        threads = hyper_params[7]
+        plot_boolean = hyper_params[7]
+        threads = hyper_params[8]
 
         # bounds = [lower_x, upper_x, lower_x1, upper_x2...]
         bounds = self.bounds
@@ -262,6 +266,13 @@ class LazyOpt(list):
 
         x_ = self.normalise_inputs(x)
 
+        # create multiprocessing pool
+        from multiprocessing import Pool
+        pool = None
+        if threads > 1:
+            pool = Pool(processes=threads)
+            print(f'Created process pool with {threads} workers')
+
         iter = 0
         import time
         start = time.time()
@@ -273,18 +284,47 @@ class LazyOpt(list):
             a = array(logical_not(f_hat_pred), dtype='float64')
             alpha = beta(a + epsilon, b + epsilon, (len(f_hat_pred), 1))
 
-            # Select new sample
-            alpha_max_index = alpha.argmax()
-            x_star = xxx[alpha_max_index, :]  # shape (dims,)
-            x = np.vstack((x, x_star.reshape(1, -1)))
+            if threads == 1:
+                # Select new sample
+                alpha_max_index = alpha.argmax()
+                x_star = xxx[alpha_max_index, :]  # shape (dims,)
+                x = np.vstack((x, x_star.reshape(1, -1)))
 
-            # normalise x vec
-            x_ = self.normalise_inputs(x)
+                # normalise x vec
+                x_ = self.normalise_inputs(x)
 
-            # Evaluate new point
-            f_star = self.function_call(x_star.reshape(1, -1))
-            f = np.vstack((f, np.array(f_star).reshape(1, -1)))
-            print(f'infill function call: iter {iter}')
+                # Evaluate new point
+                f_star, f1 = self.function_call(x_star.reshape(1, -1))
+                self.physically_feasible.append(f_star)
+                self.f1.append(f1)
+
+                f = np.vstack((f, np.array(f_star).reshape(1, -1)))
+                print(f'infill function call: iter {iter}')
+            else:
+                top_n_indices = np.argsort(alpha.ravel())[-threads:][::-1]  # descending order
+                x_stars = xxx[top_n_indices, :]  # shape (threads, dims)
+                # add top 10 x_stars to x
+                x = np.vstack((x, x_stars))
+
+                # normalise x vec
+                x_ = self.normalise_inputs(x)
+
+                # Prepare inputs: list of arrays, each shape (1, dims)
+                inputs = [x_stars[i:i + 1, :] for i in range(threads)]
+
+                # Evaluate all x_star points in parallel
+                results = pool.map(self.function_call, inputs)
+
+                # Unpack results and append to lists
+                # results is a list of tuples: [(f_star_0, f1_0), (f_star_1, f1_1), ...]
+                f_stars = []
+                for f_star, f1 in results:
+                    self.physically_feasible.append(f_star)
+                    self.f1.append(f1)
+                    f_stars.append(f_star)
+                # Stack all results
+                f = np.vstack((f, np.array(f_stars).reshape(-1, 1)))
+                print(f'infill function calls: iter {iter}, evaluated {threads} points in parallel')
 
             if iter >= iter_max:
                 break
@@ -313,7 +353,7 @@ class LazyOpt(list):
         self.xxx_ = xxx_
 
         # plot once at the end
-        if hyper_params[7]:
+        if plot_boolean:
             self.plot_latent(x, f, x_, xxx_)
 
 
@@ -362,7 +402,7 @@ if __name__ == '__main__':
                     1,      # k-folds - depreciated
                     11,     # number of dimentions
                     1,      # boolean to draw a fast latent plot
-                    1]      # number of threads or how many function calls per iteration
+                    2]      # number of threads or how many function calls per iteration
     lazy = LazyOpt()
     lazy.seeding(seed)
     lazy.set_bounds(bounds)
