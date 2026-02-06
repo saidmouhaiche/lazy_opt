@@ -12,6 +12,7 @@ from sklearn.neighbors import KNeighborsClassifier
 import math
 import json
 import shutil
+import time
 
 import pandas as pd
 import numpy as np
@@ -20,9 +21,6 @@ from numpy import array, empty, random, linspace, meshgrid, zeros, reshape, hsta
     count_nonzero, argmax, vstack
 from numpy.random import beta
 from numpy import array, empty, random, linspace, meshgrid, zeros, reshape, hstack
-
-import math
-from math import exp
 
 from scipy.stats import qmc
 
@@ -50,10 +48,6 @@ class sim_batch(list):
         self.bounds = []
         self.x_seed = []
         self.f_seed = []
-
-        self.xxx__ = []
-        self.x__ = []
-        self.f_hat_latent = []
 
         self.physically_feasible = []
 
@@ -84,7 +78,7 @@ class sim_batch(list):
             print(f"feasible      :       [X]")
 
         self.physically_feasible.append(feasible)
-        self.f1.append(feasible)
+        self.f1.append(f1)
         return feasible
 
     def seeding(self, x):
@@ -99,7 +93,7 @@ class sim_batch(list):
 
     def run_sbao(self, hyper_params):
 
-        def plot_latent(x, f, xxx, x_, xxx_):
+        def plot_latent(x, f, x_, xxx_):
 
             # give a binary mask of feasiblity, so if feas==1, then it is feasible.
             feas = np.array([int(fi[0] < 1e-3) for fi in f])
@@ -108,24 +102,20 @@ class sim_batch(list):
             x_xxx_ = np.vstack([x_, xxx_])
 
             # Reduce to 2D latent space
-            # x_xxx_latent = TSNE(n_components=2).fit_transform(x_xxx_)
+            start = time.time()
             x_xxx_latent = PCA(n_components=2).fit_transform(x_xxx_)
 
             # Split back to x and xxx projections
             x_len = x.shape[0]
-            xxx_len = xxx.shape[0]
-            x__ = x_xxx_latent[:x_len, :]
-            xxx__ = x_xxx_latent[x_len:, :]
-
-            # Train KNN on the latent projection
-            k = 1
-            f_hat_latent = KNeighborsClassifier(n_neighbors=k)
-            f_hat_latent.fit(x__, f.ravel())
-            f_hat_pred_latent = f_hat_latent.predict(xxx__)
-            f_hat_pred_latent = f_hat_pred_latent.reshape(-1, 1)
-
-            # Estimate resolution
-            res = int(np.sqrt(xxx__.shape[0]))
+            if x_len < 30:
+                raise ValueError(f"TSNE needs a minimum of 30 points, or reduce the perplexity(k-neighbors) parameter")
+            x__1 = x_xxx_latent[:x_len, :]
+            x__ = TSNE(n_components=2).fit_transform(x__1)
+            # from MulticoreTSNE import MulticoreTSNE as TSNE
+            # tsne = TSNE(n_jobs=4) # n_jobs is number of cores (4=1.2x speedup)
+            # x__ = tsne(n_components=2).fit_transform(x__1)
+            end = time.time()
+            print(f'\nFAST latent embedding took: {end - start}s\nFor a more structured plot please use TSNE on x__1=PCA(x_xxx_) with Mahalanobis distance')
 
             # === Plotting ===
             fig, ax = plt.subplots()
@@ -145,27 +135,6 @@ class sim_batch(list):
                     zorder=2
                 )
 
-            # Shade KNN-predicted boundary in latent space
-            for i in range(xxx__.shape[0]):
-                if f_hat_pred_latent[i, 0] == 0:
-                    ax.scatter(
-                        xxx__[i, 0], xxx__[i, 1],
-                        color='green',
-                        alpha=0.3,
-                        s=25,
-                        edgecolors='none',
-                        zorder=1
-                    )
-                else:
-                    ax.scatter(
-                        xxx__[i, 0], xxx__[i, 1],
-                        color='grey',
-                        alpha=0.1,
-                        s=25,
-                        edgecolors='none',
-                        zorder=1
-                    )
-
             # Colorbar
             norm = mcolors.Normalize(vmin=np.min(f1), vmax=np.max(f1))
             sm = cm.ScalarMappable(cmap=cm.viridis, norm=norm)
@@ -175,14 +144,12 @@ class sim_batch(list):
 
             ax.set_xlabel("Latent x1")
             ax.set_ylabel("Latent x2")
-            ax.set_title("Latent Design Space with KNN Boundary")
+            ax.set_title("Latent Design Space with Feasbile Outlined in Black")
             ax.grid(True, zorder=1)
 
             plt.savefig("live_plot.png")
-            print('latent plot generated')
+            print('Saved live_plot.png')
             plt.close()
-
-            return x__, xxx__, f_hat_latent
 
         def scope_bounds(input, bounds):
             # input: (N, dims) in [0, 1]
@@ -329,11 +296,7 @@ class sim_batch(list):
 
         # plot once at the end
         if hyper_params[7]:
-            x__, xxx__, f_hat_latent = plot_latent(x, f, xxx, x_, xxx_)
-
-            self.xxx__ = xxx__
-            self.x__ = x__
-            self.f_hat_latent = f_hat_latent
+            plot_latent(x, f, x_, xxx_)
 
 
 if __name__ == '__main__':
@@ -373,7 +336,7 @@ if __name__ == '__main__':
 
     # hyper_params = [surr, epsilon, number_of_samples, iter_max, res, k-folds, dimentions, liveplot boolean]
     res = 1000
-    hyper_params = ['KNN', 1, 5, 10, res, 1, 11,1]
+    hyper_params = ['KNN', 1, 30, 50, res, 1, 11,1]
     # hyper_params = ['KNN', 3, 50, 250, 250, 10]
     lazy = sim_batch()
     lazy.seeding(seed)
