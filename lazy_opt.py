@@ -24,13 +24,28 @@ from numpy import array, empty, random, linspace, meshgrid, zeros, reshape, hsta
 
 from scipy.stats import qmc
 
-class sim_batch(list):
+class LazyOpt(list):
+    '''
+    TODO:
+    1. genralise this class to pass in any 'function_call'
+    2. multiprocessing
+    3. saving and loading results
+    4. write docs on how to use this and not break it
+    5. make it work in the same format as other optimisers, like sklearn.minimize() or something
+
+    Hyperparameters:
+        hyper_params = ['KNN',  # classificaiton surrogate
+                    1,      # epsilon (exploration-explolitation parameter)
+                    30,     # number of samples using DoE (design of experiment)
+                    50,     # maximum iterations
+                    res,    # resoultion of discritsation
+                    1,      # k-folds - this is depreciated
+                    11,     # number of dimentions
+                    1,      # boolean to draw a fast latent plot
+                    1]      # number of threads or how many function calls per iteration
+    '''
 
     def __init__(self):
-        # # ork name
-        # super().__init__()
-        # self.ork_name = 'simple.ork'
-
         # results
         self.f1 = []
         self.surrogate_pred = []
@@ -229,6 +244,7 @@ class sim_batch(list):
         res = hyper_params[4]
         k = hyper_params[5]
         dims = hyper_params[6]
+        threads = hyper_params[7]
 
         # bounds = [lower_x, upper_x, lower_x1, upper_x2...]
         bounds = self.bounds
@@ -309,6 +325,7 @@ if __name__ == '__main__':
     # res = hyper_params[4]
     # k = hyper_params[5]
     # dims = hyper_params[6]
+    # threads = hyper_params[7]
     #
     # # bounds = [lower_x1, upper_x1, lower_x2, upper_x2...]
     bounds = [0,0.3,      # nose profile
@@ -335,10 +352,18 @@ if __name__ == '__main__':
                       0,    # grain length
                       0]])     # grain infill
 
-    # hyper_params = [surr, epsilon, number_of_samples, iter_max, res, k-folds, dimentions, liveplot boolean]
+    # hyper_params = [surr, epsilon, number_of_samples, iter_max, res, k-folds, dimentions, liveplot boolean, number of threads]
     res = 1000
-    hyper_params = ['KNN', 1, 30, 50, res, 1, 11,1]
-    lazy = sim_batch()
+    hyper_params = ['KNN',  # classificaiton surrogate
+                    1,      # epsilon (exploration-explolitation parameter)
+                    30,     # number of samples using DoE (design of experiment)
+                    50,     # maximum iterations
+                    res,    # resoultion of discritsation
+                    1,      # k-folds - depreciated
+                    11,     # number of dimentions
+                    1,      # boolean to draw a fast latent plot
+                    1]      # number of threads or how many function calls per iteration
+    lazy = LazyOpt()
     lazy.seeding(seed)
     lazy.set_bounds(bounds)
     lazy.run_lazy_opt(hyper_params)
