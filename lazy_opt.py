@@ -87,138 +87,140 @@ class sim_batch(list):
         self.f_seed = np.array([[feasible]])
         return
 
+    def plot_latent(self, x, f, x_, xxx_):
+
+        # give a binary mask of feasiblity, so if feas==1, then it is feasible.
+        feas = np.array([int(fi[0] < 1e-3) for fi in f])
+
+        # Stack real and sample points together
+        x_xxx_ = np.vstack([x_, xxx_])
+
+        # Reduce to 2D latent space
+        start = time.time()
+        x_xxx_latent = PCA(n_components=2).fit_transform(x_xxx_)
+
+        # Split back to x and xxx projections
+        x_len = x.shape[0]
+        if x_len < 30:
+            raise ValueError(f"TSNE needs a minimum of 30 points, or reduce the perplexity(k-neighbors) parameter")
+        x__1 = x_xxx_latent[:x_len, :]
+        x__ = TSNE(n_components=2).fit_transform(x__1)
+        # from MulticoreTSNE import MulticoreTSNE as TSNE
+        # tsne = TSNE(n_jobs=4) # n_jobs is number of cores (4=1.2x speedup)
+        # x__ = tsne(n_components=2).fit_transform(x__1)
+        end = time.time()
+        print(f'\nFAST latent embedding took: {end - start}s\nFor a more structured plot please use TSNE on x__1=PCA(x_xxx_) with Mahalanobis distance')
+
+        # === Plotting ===
+        fig, ax = plt.subplots()
+
+        # Colours based on objective value.
+        f1 = np.array(self.f1)
+        colors = cm.viridis(f1 / np.max(f1))  # scale to [0, 1]
+
+        # Plot each actual x point
+        for xi, yi, ci, fi in zip(x__[:, 0], x__[:, 1], colors, feas):
+            ax.scatter(
+                xi, yi,
+                color=ci,
+                edgecolors='black' if fi == 1 else 'none',
+                linewidths=1,
+                s=60,
+                zorder=2
+            )
+
+        # Colorbar
+        norm = mcolors.Normalize(vmin=np.min(f1), vmax=np.max(f1))
+        sm = cm.ScalarMappable(cmap=cm.viridis, norm=norm)
+        sm.set_array([])
+        cbar = plt.colorbar(sm, ax=ax)
+        cbar.set_label("Objective: f1")
+
+        ax.set_xlabel("Latent x1")
+        ax.set_ylabel("Latent x2")
+        ax.set_title("Latent Design Space with Feasbile Outlined in Black")
+        ax.grid(True, zorder=1)
+
+        plt.savefig("live_plot.png")
+        print('Saved live_plot.png')
+        plt.close()
+
+    def scope_bounds(self, input, bounds):
+        # input: (N, dims) in [0, 1]
+        # bounds: list of length 2*dims → [a1, b1, a2, b2, ..., ad, bd]
+        dims = hyper_params[6]
+        scaled_input = empty([len(input), dims])
+        for i in range(dims):
+            a = bounds[2 * i]
+            b = bounds[2 * i + 1]
+            scaled_input[:, i] = input[:, i] * (b - a) + a
+        return scaled_input
+
+    def grid_discretize(self, res, bounds):
+        from scipy.stats import qmc
+        dims = hyper_params[6]
+
+        # Total number of samples = res^dims
+        # num_points = res ** dims
+        num_points = res
+
+        # Create uniform grid in [0,1]^dims using Sobol or Latin Hypercube
+        sampler = qmc.LatinHypercube(d=dims)
+        xxx_ = sampler.random(n=num_points)
+
+        # Scale to real bounds
+        xxx = self.scope_bounds(xxx_, bounds)
+
+        # Return normalized and scaled versions
+        return xxx, xxx_
+
+    def predict(self, f_hat, x):
+        f_hat_pred_ = f_hat.predict(x)
+        f_hat_pred = reshape(f_hat_pred_, (-1, 1))
+        return f_hat_pred
+
+    def sampling(self, number_of_samples, bounds):
+        dims = hyper_params[6]
+        sampler = qmc.LatinHypercube(d=dims)
+        space_ = sampler.random(n=number_of_samples)
+        space = self.scope_bounds(space_, bounds)
+
+        x = empty([number_of_samples, dims])
+        f = empty([number_of_samples, 1])
+        for i in range(0, number_of_samples):
+            x[i, :] = space[i, :]
+            f[i, :] = self.function_call(array([x[i, :]]))
+            print(f'sampling {i + 1}/{number_of_samples}')
+        return x, f
+
+    def create_surrogate(self, x, f, surr):
+        f_hat = self.supervised_training_lite(x, f, surr)
+        return f_hat
+
+    def supervised_training_lite(self, x, f, model='KNN'):
+        if model == 'KNN':
+            k = 1
+            f_hat = KNeighborsClassifier(n_neighbors=k)
+            f_hat.fit(x, f.ravel())
+        elif model == 'SVM':
+            from sklearn import svm
+            f_hat = svm.SVC(kernel='rbf')
+            f_hat.fit(x, f.ravel())
+        else:
+            raise ValueError('Classification surrogate model is not supported! only use "KNN" or "SVM"')
+        return f_hat
+
+    def normalise_inputs(self, x):
+        """Normalise each column of x to [0,1]."""
+        mins = np.min(x, axis=0)
+        maxs = np.max(x, axis=0)
+        return (x - mins) / (maxs - mins + 1e-12)  # small epsilon to avoid divide-by-zero
+
     def set_bounds(self, bounds):
         self.bounds = bounds
         return
 
-    def run_sbao(self, hyper_params):
-
-        def plot_latent(x, f, x_, xxx_):
-
-            # give a binary mask of feasiblity, so if feas==1, then it is feasible.
-            feas = np.array([int(fi[0] < 1e-3) for fi in f])
-
-            # Stack real and sample points together
-            x_xxx_ = np.vstack([x_, xxx_])
-
-            # Reduce to 2D latent space
-            start = time.time()
-            x_xxx_latent = PCA(n_components=2).fit_transform(x_xxx_)
-
-            # Split back to x and xxx projections
-            x_len = x.shape[0]
-            if x_len < 30:
-                raise ValueError(f"TSNE needs a minimum of 30 points, or reduce the perplexity(k-neighbors) parameter")
-            x__1 = x_xxx_latent[:x_len, :]
-            x__ = TSNE(n_components=2).fit_transform(x__1)
-            # from MulticoreTSNE import MulticoreTSNE as TSNE
-            # tsne = TSNE(n_jobs=4) # n_jobs is number of cores (4=1.2x speedup)
-            # x__ = tsne(n_components=2).fit_transform(x__1)
-            end = time.time()
-            print(f'\nFAST latent embedding took: {end - start}s\nFor a more structured plot please use TSNE on x__1=PCA(x_xxx_) with Mahalanobis distance')
-
-            # === Plotting ===
-            fig, ax = plt.subplots()
-
-            # Colours based on objective value.
-            f1 = np.array(self.f1)
-            colors = cm.viridis(f1 / np.max(f1))  # scale to [0, 1]
-
-            # Plot each actual x point
-            for xi, yi, ci, fi in zip(x__[:, 0], x__[:, 1], colors, feas):
-                ax.scatter(
-                    xi, yi,
-                    color=ci,
-                    edgecolors='black' if fi == 1 else 'none',
-                    linewidths=1,
-                    s=60,
-                    zorder=2
-                )
-
-            # Colorbar
-            norm = mcolors.Normalize(vmin=np.min(f1), vmax=np.max(f1))
-            sm = cm.ScalarMappable(cmap=cm.viridis, norm=norm)
-            sm.set_array([])
-            cbar = plt.colorbar(sm, ax=ax)
-            cbar.set_label("Objective: f1")
-
-            ax.set_xlabel("Latent x1")
-            ax.set_ylabel("Latent x2")
-            ax.set_title("Latent Design Space with Feasbile Outlined in Black")
-            ax.grid(True, zorder=1)
-
-            plt.savefig("live_plot.png")
-            print('Saved live_plot.png')
-            plt.close()
-
-        def scope_bounds(input, bounds):
-            # input: (N, dims) in [0, 1]
-            # bounds: list of length 2*dims → [a1, b1, a2, b2, ..., ad, bd]
-            dims = hyper_params[6]
-            scaled_input = empty([len(input), dims])
-            for i in range(dims):
-                a = bounds[2 * i]
-                b = bounds[2 * i + 1]
-                scaled_input[:, i] = input[:, i] * (b - a) + a
-            return scaled_input
-
-        def grid_discretize(res, bounds):
-            from scipy.stats import qmc
-            dims = hyper_params[6]
-
-            # Total number of samples = res^dims
-            # num_points = res ** dims
-            num_points = res
-
-            # Create uniform grid in [0,1]^dims using Sobol or Latin Hypercube
-            sampler = qmc.LatinHypercube(d=dims)
-            xxx_ = sampler.random(n=num_points)
-
-            # Scale to real bounds
-            xxx = scope_bounds(xxx_, bounds)
-
-            # Return normalized and scaled versions
-            return xxx, xxx_
-
-        def predict(f_hat, x):
-            f_hat_pred_ = f_hat.predict(x)
-            f_hat_pred = reshape(f_hat_pred_, (-1, 1))
-            return f_hat_pred
-
-        def sampling(number_of_samples, bounds):
-            dims = hyper_params[6]
-            sampler = qmc.LatinHypercube(d=dims)
-            space_ = sampler.random(n=number_of_samples)
-            space = scope_bounds(space_, bounds)
-
-            x = empty([number_of_samples, dims])
-            f = empty([number_of_samples, 1])
-            for i in range(0, number_of_samples):
-                x[i, :] = space[i, :]
-                f[i, :] = self.function_call(array([x[i, :]]))
-                print(f'sampling {i + 1}/{number_of_samples}')
-            return x, f
-
-        def create_surrogate(x, f, surr):
-            f_hat = supervised_training_lite(x, f, surr)
-            return f_hat
-
-        def supervised_training_lite(x, f, model='KNN'):
-            if model == 'KNN':
-                k = 1
-                f_hat = KNeighborsClassifier(n_neighbors=k)
-                f_hat.fit(x, f.ravel())
-            elif model == 'SVM':
-                from sklearn import svm
-                f_hat = svm.SVC(kernel='rbf')
-                f_hat.fit(x, f.ravel())
-            return f_hat
-
-        def normalise_inputs(x):
-            """Normalise each column of x to [0,1]."""
-            mins = np.min(x, axis=0)
-            maxs = np.max(x, axis=0)
-            return (x - mins) / (maxs - mins + 1e-12)  # small epsilon to avoid divide-by-zero
+    def run_lazy_opt(self, hyper_params):
 
         surr = hyper_params[0]
         epsilon = hyper_params[1]
@@ -234,22 +236,22 @@ class sim_batch(list):
         x_seed = self.x_seed
         f_seed = self.f_seed
 
-        xxx, xxx_ = grid_discretize(res, bounds)
-        x_sample, f_sample = sampling(number_of_samples, bounds)
+        xxx, xxx_ = self.grid_discretize(res, bounds)
+        x_sample, f_sample = self.sampling(number_of_samples, bounds)
 
         x = vstack((x_seed, x_sample))
         f = vstack((f_seed, f_sample))
 
         print(f'\nNumber of Hits from Sampling Found: {count_nonzero(f)}')
 
-        x_ = normalise_inputs(x)
+        x_ = self.normalise_inputs(x)
 
         iter = 0
         import time
         start = time.time()
         while 1:
-            f_hat = create_surrogate(x_, f, surr)
-            f_hat_pred = predict(f_hat, xxx_)
+            f_hat = self.create_surrogate(x_, f, surr)
+            f_hat_pred = self.predict(f_hat, xxx_)
 
             b = f_hat_pred
             a = array(logical_not(f_hat_pred), dtype='float64')
@@ -261,7 +263,7 @@ class sim_batch(list):
             x = np.vstack((x, x_star.reshape(1, -1)))
 
             # normalise x vec
-            x_ = normalise_inputs(x)
+            x_ = self.normalise_inputs(x)
 
             # Evaluate new point
             f_star = self.function_call(x_star.reshape(1, -1))
@@ -296,7 +298,7 @@ class sim_batch(list):
 
         # plot once at the end
         if hyper_params[7]:
-            plot_latent(x, f, x_, xxx_)
+            self.plot_latent(x, f, x_, xxx_)
 
 
 if __name__ == '__main__':
@@ -321,7 +323,6 @@ if __name__ == '__main__':
               0.4,0.6,      # grain length
               -0.75,-0.95]        # grain infill
 
-    # sweep58, height0.25
     seed = np.array([[-1,        # nose profile
                       0,    # nose cone length
                       0,     # fin height
@@ -337,8 +338,7 @@ if __name__ == '__main__':
     # hyper_params = [surr, epsilon, number_of_samples, iter_max, res, k-folds, dimentions, liveplot boolean]
     res = 1000
     hyper_params = ['KNN', 1, 30, 50, res, 1, 11,1]
-    # hyper_params = ['KNN', 3, 50, 250, 250, 10]
     lazy = sim_batch()
     lazy.seeding(seed)
     lazy.set_bounds(bounds)
-    lazy.run_sbao(hyper_params)
+    lazy.run_lazy_opt(hyper_params)
