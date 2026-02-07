@@ -54,7 +54,7 @@ class LazyOpt():
         self.hyper_params = []
 
         # results
-        self.f1 = []
+
         self.surrogate_pred = []
         self.true_pred = []
         self.xxx = []
@@ -71,29 +71,46 @@ class LazyOpt():
         self.x_seed = []
         self.f_seed = []
 
-        self.physically_feasible = []
+        # store solver outputs
+        self.objectives = []
+        self.feasible = []
 
     def function_call(self, input_row):
         if self.solver_function is None:
             raise ValueError("No objective function provided! Pass one to __init__")
 
-        feasible, f1 = self.solver_function(input_row)
+        feasible, objectives = self.solver_function(input_row)
+
+        # Validate outputs
+        if not isinstance(feasible, (bool, np.bool_)):
+            raise TypeError(
+                f"Function must return (bool, tuple), but 'feasible' is {type(feasible)}."
+                f"Expected: True/False"
+            )
+
+        if not isinstance(objectives, tuple):
+            raise TypeError(
+                f"Function must return (bool, tuple), but 'objectives' is {type(objectives)}."
+                f"Expected: (f1,) for single objective or (f1, f2, ...) for multi - objective."
+                f"Example: return True, (value,)"
+            )
 
         # Feasbile is defined as False!, the optimisation is formulated as a minimization problem
         print("\n=== function_call ===")
-        print(f"f1      :       {f1:.2f}")
+        for i, obj in enumerate(objectives, 1):
+            print(f"f{i}     :       {obj:.2f}")
         if feasible:
             print(f"feasible      :       [ ]")
         else:
             print(f"feasible      :       [X]")
 
-        return feasible, f1
+        return feasible, objectives
 
     def seeding(self, x):
         self.x_seed = x
         feasible, f1 = self.function_call(x)
-        self.physically_feasible.append(feasible)
-        self.f1.append(f1)
+        self.feasible.append(feasible)
+        self.objectives.append(f1)
         self.f_seed = np.array([[feasible]])
         return
 
@@ -125,7 +142,8 @@ class LazyOpt():
         fig, ax = plt.subplots()
 
         # Colours based on objective value.
-        f1 = np.array(self.f1)
+        # take the first objective value always !!
+        f1 = np.array([obj[0] for obj in self.objectives])
         colors = cm.viridis(f1 / np.max(f1))  # scale to [0, 1]
 
         # Plot each actual x point
@@ -200,8 +218,8 @@ class LazyOpt():
         for i in range(0, number_of_samples):
             x[i, :] = space[i, :]
             f[i, :], f1 = self.function_call(array([x[i, :]]))
-            self.physically_feasible.append(f[i, :])
-            self.f1.append(f1)
+            self.feasible.append(f[i, :])
+            self.objectives.append(f1)
             print(f'sampling {i + 1}/{number_of_samples}')
         return x, f
 
@@ -296,8 +314,8 @@ class LazyOpt():
 
                 # Evaluate new point
                 f_star, f1 = self.function_call(x_star.reshape(1, -1))
-                self.physically_feasible.append(f_star)
-                self.f1.append(f1)
+                self.feasible.append(f_star)
+                self.objectives.append(f1)
 
                 f = np.vstack((f, np.array(f_star).reshape(1, -1)))
                 print(f'infill function call: iter {iter}')
@@ -320,8 +338,8 @@ class LazyOpt():
                 # results is a list of tuples: [(f_star_0, f1_0), (f_star_1, f1_1), ...]
                 f_stars = []
                 for f_star, f1 in results:
-                    self.physically_feasible.append(f_star)
-                    self.f1.append(f1)
+                    self.feasible.append(f_star)
+                    self.objectives.append(f1)
                     f_stars.append(f_star)
                 # Stack all results
                 f = np.vstack((f, np.array(f_stars).reshape(-1, 1)))

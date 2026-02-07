@@ -19,7 +19,7 @@ def function_call(input_row):
     f1 = x1 + x2 ** 2 + x3 ** 3 + x4 ** 4 + x5 ** 5 + x6 ** 6 + x7 ** 7 + x8 ** 8 + x9 ** 9 + x10 ** 10 + x11 ** 11
     feasible = f1 > 0
 
-    return feasible, f1
+    return feasible, (f1,)
 
 # surr = hyper_params[0]
 # epsilon = hyper_params[1]
@@ -59,13 +59,13 @@ seed = np.array([[-1,        # nose profile
 res = 1000
 hyper_params = ['KNN',  # classificaiton surrogate
                 1,      # epsilon (exploration-explolitation parameter)
-                1000,     # number of samples using DoE (design of experiment)
-                500,     # maximum iterations
+                100,     # number of samples using DoE (design of experiment)
+                50,     # maximum iterations
                 res,    # resoultion of discritsation
                 1,      # k-folds - depreciated
                 11,     # number of dimentions
                 1,      # boolean to draw a fast latent plot
-                10]      # number of threads or how many function calls per iteration
+                2]      # number of threads or how many function calls per iteration
 
 if __name__ == '__main__':
     lazy = LazyOpt(function_call)
