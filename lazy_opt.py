@@ -13,6 +13,7 @@ import math
 import json
 import shutil
 import time
+import sys
 from multiprocessing import Pool
 
 import pandas as pd
@@ -25,7 +26,7 @@ from numpy import array, empty, random, linspace, meshgrid, zeros, reshape, hsta
 
 from scipy.stats import qmc
 
-class LazyOpt(list):
+class LazyOpt():
     '''
     TODO:
     1. genralise this class to pass in any 'function_call' and handle any number of objectives f1,f2...
@@ -46,7 +47,12 @@ class LazyOpt(list):
                     1]      # number of threads or how many function calls per iteration
     '''
 
-    def __init__(self):
+    def __init__(self, solver_function):
+        self.solver_function = solver_function
+
+        # store hyperparams
+        self.hyper_params = []
+
         # results
         self.f1 = []
         self.surrogate_pred = []
@@ -68,22 +74,10 @@ class LazyOpt(list):
         self.physically_feasible = []
 
     def function_call(self, input_row):
-        # === CONFIGURATION ===
+        if self.solver_function is None:
+            raise ValueError("No objective function provided! Pass one to __init__")
 
-        x1 = input_row[0, 0]
-        x2 = input_row[0, 1]
-        x3 = input_row[0, 2]
-        x4 = input_row[0, 3]
-        x5 = input_row[0, 4]
-        x6 = input_row[0, 5]
-        x7 = input_row[0, 6]
-        x8 = input_row[0, 7]
-        x9 = input_row[0, 8]
-        x10= input_row[0, 9]
-        x11= input_row[0, 10]
-
-        f1 = x1 + x2**2 + x3**3 + x4**4 + x5**5 + x6**6 + x7**7 + x8**8 + x9**9 + x10**10 + x11**11
-        feasible = f1>0
+        feasible, f1 = self.solver_function(input_row)
 
         # Feasbile is defined as False!, the optimisation is formulated as a minimization problem
         print("\n=== function_call ===")
@@ -164,7 +158,7 @@ class LazyOpt(list):
     def scope_bounds(self, input, bounds):
         # input: (N, dims) in [0, 1]
         # bounds: list of length 2*dims → [a1, b1, a2, b2, ..., ad, bd]
-        dims = hyper_params[6]
+        dims = self.hyper_params[6]
         scaled_input = empty([len(input), dims])
         for i in range(dims):
             a = bounds[2 * i]
@@ -174,7 +168,7 @@ class LazyOpt(list):
 
     def grid_discretize(self, res, bounds):
         from scipy.stats import qmc
-        dims = hyper_params[6]
+        dims = self.hyper_params[6]
 
         # Total number of samples = res^dims
         # num_points = res ** dims
@@ -196,7 +190,7 @@ class LazyOpt(list):
         return f_hat_pred
 
     def sampling(self, number_of_samples, bounds):
-        dims = hyper_params[6]
+        dims = self.hyper_params[6]
         sampler = qmc.LatinHypercube(d=dims)
         space_ = sampler.random(n=number_of_samples)
         space = self.scope_bounds(space_, bounds)
@@ -239,6 +233,7 @@ class LazyOpt(list):
         return
 
     def run_lazy_opt(self, hyper_params):
+        self.hyper_params = hyper_params
 
         surr = hyper_params[0]
         epsilon = hyper_params[1]
@@ -270,11 +265,17 @@ class LazyOpt(list):
         from multiprocessing import Pool
         pool = None
         if threads > 1:
+            print("\n WARNING: Using multiprocessing with threads > 1")
+            print("   make sure your script is protected with:")
+            print("   if __name__ == '__main__':")
+            print("       # your lazy opt code here")
+            print("   otherwise you'll get infinite process spawning!\n")
+
             pool = Pool(processes=threads)
             print(f'Created process pool with {threads} workers')
 
         iter = 0
-        import time
+
         start = time.time()
         while 1:
             f_hat = self.create_surrogate(x_, f, surr)
@@ -357,53 +358,53 @@ class LazyOpt(list):
             self.plot_latent(x, f, x_, xxx_)
 
 
-if __name__ == '__main__':
-    # surr = hyper_params[0]
-    # epsilon = hyper_params[1]
-    # number_of_samples = hyper_params[2]
-    # iter_max = hyper_params[3]
-    # res = hyper_params[4]
-    # k = hyper_params[5]
-    # dims = hyper_params[6]
-    # threads = hyper_params[7]
-    #
-    # # bounds = [lower_x1, upper_x1, lower_x2, upper_x2...]
-    bounds = [0,0.3,      # nose profile
-              0.3, 1,       # nose cone length
-              0.1, 0.4,     # fin height
-              0, 0.6,        # fin sweep
-              -0.6, 0,     # fin position
-              0.2, 0.5,     # fin chord ratio
-              0, 0.3,     # boatail profile
-              0.03, 0.04,   # nozzle diamaeter
-              4.6e-5,10.5e-5, # injector area
-              0.4,0.6,      # grain length
-              -0.75,-0.95]        # grain infill
-
-    seed = np.array([[-1,        # nose profile
-                      0,    # nose cone length
-                      0,     # fin height
-                      0,    # fin sweep
-                      0,    # fin position
-                      0,    # fin chord ratio
-                      0,        # boatail profile
-                      0,     # nozzle diamaeter
-                      0,     # injector area
-                      0,    # grain length
-                      0]])     # grain infill
-
-    # hyper_params = [surr, epsilon, number_of_samples, iter_max, res, k-folds, dimentions, liveplot boolean, number of threads]
-    res = 1000
-    hyper_params = ['KNN',  # classificaiton surrogate
-                    1,      # epsilon (exploration-explolitation parameter)
-                    30,     # number of samples using DoE (design of experiment)
-                    50,     # maximum iterations
-                    res,    # resoultion of discritsation
-                    1,      # k-folds - depreciated
-                    11,     # number of dimentions
-                    1,      # boolean to draw a fast latent plot
-                    2]      # number of threads or how many function calls per iteration
-    lazy = LazyOpt()
-    lazy.seeding(seed)
-    lazy.set_bounds(bounds)
-    lazy.run_lazy_opt(hyper_params)
+# if __name__ == '__main__':
+#     # surr = hyper_params[0]
+#     # epsilon = hyper_params[1]
+#     # number_of_samples = hyper_params[2]
+#     # iter_max = hyper_params[3]
+#     # res = hyper_params[4]
+#     # k = hyper_params[5]
+#     # dims = hyper_params[6]
+#     # threads = hyper_params[7]
+#     #
+#     # # bounds = [lower_x1, upper_x1, lower_x2, upper_x2...]
+#     bounds = [0,0.3,      # nose profile
+#               0.3, 1,       # nose cone length
+#               0.1, 0.4,     # fin height
+#               0, 0.6,        # fin sweep
+#               -0.6, 0,     # fin position
+#               0.2, 0.5,     # fin chord ratio
+#               0, 0.3,     # boatail profile
+#               0.03, 0.04,   # nozzle diamaeter
+#               4.6e-5,10.5e-5, # injector area
+#               0.4,0.6,      # grain length
+#               -0.75,-0.95]        # grain infill
+#
+#     seed = np.array([[-1,        # nose profile
+#                       0,    # nose cone length
+#                       0,     # fin height
+#                       0,    # fin sweep
+#                       0,    # fin position
+#                       0,    # fin chord ratio
+#                       0,        # boatail profile
+#                       0,     # nozzle diamaeter
+#                       0,     # injector area
+#                       0,    # grain length
+#                       0]])     # grain infill
+#
+#     # hyper_params = [surr, epsilon, number_of_samples, iter_max, res, k-folds, dimentions, liveplot boolean, number of threads]
+#     res = 1000
+#     hyper_params = ['KNN',  # classificaiton surrogate
+#                     1,      # epsilon (exploration-explolitation parameter)
+#                     30,     # number of samples using DoE (design of experiment)
+#                     50,     # maximum iterations
+#                     res,    # resoultion of discritsation
+#                     1,      # k-folds - depreciated
+#                     11,     # number of dimentions
+#                     1,      # boolean to draw a fast latent plot
+#                     1]      # number of threads or how many function calls per iteration
+#     lazy = LazyOpt()
+#     lazy.seeding(seed)
+#     lazy.set_bounds(bounds)
+#     lazy.run_lazy_opt(hyper_params)
