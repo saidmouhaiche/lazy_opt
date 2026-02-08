@@ -29,6 +29,11 @@ from scipy.stats import qmc
 class LazyOpt():
     '''
     TODO:
+    0. allow seeding to be optitnal but return a warning
+    0. an actual live plot
+    0. better pritning (feasible [X] is flipped
+    0. setting hyperparams
+    0. warn user not to do 20 <= power <= 30
     1. genralise this class to pass in any 'function_call' and handle any number of objectives f1,f2...
     2. multiprocessing
     3. saving and loading results
@@ -106,13 +111,40 @@ class LazyOpt():
 
         return feasible, objectives
 
-    def seeding(self, x):
-        self.x_seed = x
-        feasible, f1 = self.function_call(x)
-        self.feasible.append(feasible)
-        self.objectives.append(f1)
-        self.f_seed = np.array([[feasible]])
+    def seeding(self, seed_tuple):
+        '''
+          Single seed (backward compatible):
+          seed = np.array([0.1, 0.2, 0.3, 0.4, 0.5])  # 1D array
+          lazy.seeding(seed)
+
+          Multiple seeds:
+          seeds = np.array([
+              [0.1, 0.2, 0.3, 0.4, 0.5],  # seed 1
+              [0.2, 0.3, 0.4, 0.5, 0.6],  # seed 2
+              [0.3, 0.4, 0.5, 0.6, 0.7],  # seed 3
+          ])
+          lazy.seeding(seeds)
+        '''
+        # check seed_tuple is (n_seeds,dims)
+        seed = np.atleast_2d(seed_tuple)
+        n_seeds = seed.shape[0]
+        self.x_seed = seed
+
+        f_seed_list = []
+        for i in range(n_seeds):
+            seed_i = seed[i:i+1,:] #(seed, dims)
+            feasible, f1 = self.function_call(seed_i)
+
+            self.feasible.append(feasible)
+            self.objectives.append(f1)
+
+            f_seed_list.append(feasible)
+            print(f'seeding {i + 1}/{n_seeds}')
+
+        # Stack all feasibility results
+        self.f_seed = np.array(f_seed_list).reshape(-1, 1)
         return
+
 
     def plot_latent(self, x, f, x_, xxx_):
 

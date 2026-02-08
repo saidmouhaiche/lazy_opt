@@ -55,6 +55,8 @@ seed = np.array([[-1,        # nose profile
                   0,    # grain length
                   0]])     # grain infill
 
+seed_2 = np.array([[-1,0,0,0,0,0,0,0,0,0,0],[-1,0,0,0,0,0,0,0,0,0,0]])
+
 # hyper_params = [surr, epsilon, number_of_samples, iter_max, res, k-folds, dimentions, liveplot boolean, number of threads]
 res = 1000
 hyper_params = ['KNN',  # classificaiton surrogate
@@ -69,6 +71,6 @@ hyper_params = ['KNN',  # classificaiton surrogate
 
 if __name__ == '__main__':
     lazy = LazyOpt(function_call)
-    lazy.seeding(seed)
+    lazy.seeding(seed_2)
     lazy.set_bounds(bounds)
     lazy.run_lazy_opt(hyper_params)
