@@ -55,14 +55,14 @@ seed = np.array([[-1,        # nose profile
                   0,    # grain length
                   0]])     # grain infill
 
-seed_2 = np.array([[-1,0,0,0,0,0,0,0,0,0,0],[-1,0,0,0,0,0,0,0,0,0,0]])
+seed_2 = np.array([[0.2,0.3,0.1,0,-0.6,0.2,0,0.03,4.6e-5,0.4,-0.75],[0.25,0.35,0.15,0,-0.65,0.25,0.05,0.035,4.65e-5,0.45,-0.755]])
 
 # hyper_params = [surr, epsilon, number_of_samples, iter_max, res, k-folds, dimentions, liveplot boolean, number of threads]
 res = 1000
 hyper_params = ['KNN',  # classificaiton surrogate
                 1,      # epsilon (exploration-explolitation parameter)
-                100,     # number of samples using DoE (design of experiment)
-                50,     # maximum iterations
+                30,     # number of samples using DoE (design of experiment)
+                10,     # maximum iterations
                 res,    # resoultion of discritsation
                 1,      # k-folds - depreciated
                 11,     # number of dimentions
@@ -71,6 +71,6 @@ hyper_params = ['KNN',  # classificaiton surrogate
 
 if __name__ == '__main__':
     lazy = LazyOpt(function_call)
-    lazy.seeding(seed_2)
+    lazy.seeding(seed_2,assume_feasible=False)
     lazy.set_bounds(bounds)
     lazy.run_lazy_opt(hyper_params)

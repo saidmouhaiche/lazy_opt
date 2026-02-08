@@ -111,7 +111,7 @@ class LazyOpt():
 
         return feasible, objectives
 
-    def seeding(self, seed_tuple):
+    def seeding(self, seed_tuple, assume_feasible=False):
         '''
           Single seed (backward compatible):
           seed = np.array([0.1, 0.2, 0.3, 0.4, 0.5])  # 1D array
@@ -131,20 +131,124 @@ class LazyOpt():
         self.x_seed = seed
 
         f_seed_list = []
-        for i in range(n_seeds):
-            seed_i = seed[i:i+1,:] #(seed, dims)
-            feasible, f1 = self.function_call(seed_i)
+        if not assume_feasible:
+            for i in range(n_seeds):
+                seed_i = seed[i:i+1,:] #(seed, dims)
+                feasible, f1 = self.function_call(seed_i)
 
-            self.feasible.append(feasible)
-            self.objectives.append(f1)
+                self.feasible.append(feasible)
+                self.objectives.append(f1)
 
-            f_seed_list.append(feasible)
+                f_seed_list.append(feasible)
+                print(f'seeding {i + 1}/{n_seeds}')
+        else:
+            # assume that f=True
+            for i in range(n_seeds): f_seed_list.append(True)
             print(f'seeding {i + 1}/{n_seeds}')
 
         # Stack all feasibility results
         self.f_seed = np.array(f_seed_list).reshape(-1, 1)
         return
 
+    def plot_live(self, x, f, x_, xxx_):
+        from sklearn.manifold import TSNE
+        from sklearn.neighbors import KNeighborsClassifier
+        import matplotlib.pyplot as plt
+        import matplotlib.cm as cm
+        import matplotlib.colors as mcolors
+        import numpy as np
+
+        # give a binary mask of feasiblity, so if feas==1, then it is feasible.
+        feas = np.array([int(fi[0] < 1e-3) for fi in f])
+
+        # Stack real and sample points together
+        x_xxx_ = np.vstack([x_, xxx_])
+
+        # Reduce to 2D latent space
+        start = time.time()
+        x_xxx_latent = PCA(n_components=2).fit_transform(x_xxx_)
+
+
+        # Split back to x and xxx projections
+        x_len = x.shape[0]
+        if x_len < 30:
+            raise ValueError(f"TSNE needs a minimum of 30 points, or reduce the perplexity(k-neighbors) parameter")
+        x__1 = x_xxx_latent[:x_len, :]
+        x__ = TSNE(n_components=2).fit_transform(x__1)
+        xxx__ = x_xxx_latent[x_len:, :]
+        x_len = x.shape[0]
+        x__ = x_xxx_latent[:x_len, :]
+        end = time.time()
+        print(f'\nFAST latent embedding took: {end - start}s\nFor a more structured plot please use TSNE on x__1=PCA(x_xxx_) with Mahalanobis distance')
+
+        # Train KNN on the latent projection
+        k = 1
+        f_hat_latent = KNeighborsClassifier(n_neighbors=k)
+        f_hat_latent.fit(x__, f.ravel())
+        f_hat_pred_latent = f_hat_latent.predict(xxx__)
+        f_hat_pred_latent = f_hat_pred_latent.reshape(-1, 1)
+
+        # Estimate resolution
+        res = int(np.sqrt(xxx__.shape[0]))
+
+        # === Plotting ===
+        fig, ax = plt.subplots()
+
+        # Colours based on objective value.
+        # take the first objective value always !!
+        f1 = np.array([obj[0] for obj in self.objectives])
+        colors = cm.viridis(f1 / np.max(f1))  # scale to [0, 1]
+
+        # Plot each actual x point
+        for xi, yi, ci, fi in zip(x__[:, 0], x__[:, 1], colors, feas):
+            ax.scatter(
+                xi, yi,
+                color=ci,
+                edgecolors='black' if fi == 1 else 'none',
+                linewidths=1,
+                s=60,
+                zorder=2,
+                rasterized=True,
+            )
+
+        # Shade KNN-predicted boundary in latent space
+        for i in range(xxx__.shape[0]):
+            if f_hat_pred_latent[i, 0] == 0:
+                ax.scatter(
+                    xxx__[i, 0], xxx__[i, 1],
+                    color='green',
+                    alpha=0.3,
+                    s=25,
+                    edgecolors='none',
+                    zorder=1,
+                    rasterized=True
+                )
+            else:
+                ax.scatter(
+                    xxx__[i, 0], xxx__[i, 1],
+                    color='grey',
+                    alpha=0.1,
+                    s=25,
+                    edgecolors='none',
+                    zorder=1,
+                    rasterized=True
+                )
+
+        # Colorbar
+        norm = mcolors.Normalize(vmin=np.min(f1), vmax=np.max(f1))
+        sm = cm.ScalarMappable(cmap=cm.viridis, norm=norm)
+        sm.set_array([])
+        cbar = plt.colorbar(sm, ax=ax)
+        cbar.set_label("Apogee (ft)")
+
+        ax.set_xlabel("Latent x1")
+        ax.set_ylabel("Latent x2")
+        ax.set_title("Latent Design Space with KNN Boundary")
+        ax.grid(True, zorder=1)
+
+        plt.savefig("live_plot.png",dpi=50)
+        print('latent plot generated')
+        plt.close()
 
     def plot_latent(self, x, f, x_, xxx_):
 
@@ -201,7 +305,7 @@ class LazyOpt():
         ax.set_title("Latent Design Space with Feasbile Outlined in Black")
         ax.grid(True, zorder=1)
 
-        plt.savefig("live_plot.png")
+        plt.savefig("latent_plot.png")
         print('Saved live_plot.png')
         plt.close()
 
@@ -273,10 +377,23 @@ class LazyOpt():
         return f_hat
 
     def normalise_inputs(self, x):
-        """Normalise each column of x to [0,1]."""
-        mins = np.min(x, axis=0)
-        maxs = np.max(x, axis=0)
-        return (x - mins) / (maxs - mins + 1e-12)  # small epsilon to avoid divide-by-zero
+        # """Normalise each column of x to [0,1]."""
+        # mins = np.min(x, axis=0)
+        # maxs = np.max(x, axis=0)
+        # return (x - mins) / (maxs - mins + 1e-12)
+
+        """Normalise each column of x to [0,1] using the defined bounds."""
+        dims = self.hyper_params[6]
+        bounds = self.bounds
+
+        x_normalized = np.empty_like(x)
+        for i in range(dims):
+            lower = bounds[2 * i]
+            upper = bounds[2 * i + 1]
+            x_normalized[:, i] = (x[:, i] - lower) / (upper - lower)
+
+        return x_normalized
+        # small epsilon to avoid divide-by-zero
 
     def set_bounds(self, bounds):
         self.bounds = bounds
@@ -304,8 +421,12 @@ class LazyOpt():
         xxx, xxx_ = self.grid_discretize(res, bounds)
         x_sample, f_sample = self.sampling(number_of_samples, bounds)
 
-        x = vstack((x_seed, x_sample))
-        f = vstack((f_seed, f_sample))
+        if len(x_seed) > 0:
+            x = vstack((x_seed, x_sample))
+            f = vstack((f_seed, f_sample))
+        else:
+            x = x_sample
+            f = f_sample
 
         print(f'\nNumber of Hits from Sampling Found: {count_nonzero(f)}')
 
@@ -390,6 +511,8 @@ class LazyOpt():
 
             end = time.time()
             print(f'time for iter: {end-start}s')
+            if plot_boolean:
+                self.plot_live(x, f, x_, xxx_)
 
         # self.surrogate_pred = f_hat_pred.reshape((res,) * dims)  # only if you want to store reshaped
         self.f_hat_pred = f_hat_pred
@@ -404,8 +527,7 @@ class LazyOpt():
         self.xxx_ = xxx_
 
         # plot once at the end
-        if plot_boolean:
-            self.plot_latent(x, f, x_, xxx_)
+        self.plot_latent(x, f, x_, xxx_)
 
 
 # if __name__ == '__main__':
