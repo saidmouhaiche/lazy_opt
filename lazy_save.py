@@ -213,6 +213,223 @@ def save_full(lazy_opt, filepath):
     save_to_csv(lazy_opt.x, lazy_opt.feasible, lazy_opt.objectives, filepath)
 
 
+def save_pickle(lazy_opt, filepath):
+    """
+    Save the entire LazyOpt object as a pickle file.
+
+    This preserves the complete state including:
+    - All data (x, f, objectives, feasible)
+    - Trained surrogate models (f_hat)
+    - Hyperparameters and bounds
+    - Grid discretization (xxx, xxx_)
+
+    WARNING: The solver_function callback may not be pickleable if it's a lambda
+    or nested function. If you get errors, use save_state() instead.
+
+    Parameters
+    ----------
+    lazy_opt : LazyOpt instance
+        The optimization object to save
+    filepath : str or Path
+        Output pickle file path (suggest using .pkl extension)
+
+    Examples
+    --------
+    # Save complete object
+    save_pickle(lazy_opt, 'optimization.pkl')
+
+    # Load it back
+    lazy_opt = load_pickle('optimization.pkl')
+    """
+
+    # Remove unpickleable multiprocessing pool if it exists
+    # (it gets recreated when needed anyway)
+    temp_func = None
+    try:
+        with open(filepath, 'wb') as f:
+            pickle.dump(lazy_opt, f, protocol=pickle.HIGHEST_PROTOCOL)
+        print(f"Saved LazyOpt object to {filepath}")
+        print(f"  Total samples: {len(lazy_opt.x)}")
+        print(f"  Feasible: {sum(lazy_opt.feasible)}/{len(lazy_opt.feasible)}")
+    except (pickle.PicklingError, AttributeError, TypeError) as e:
+        warnings.warn(
+            f"Failed to pickle LazyOpt object: {e}\n"
+            f"This usually happens if solver_function is a lambda or nested function.\n"
+            f"Try using save_state() instead, which saves data without the function."
+        )
+        raise
+
+
+def load_pickle(filepath):
+    """
+    Load a pickled LazyOpt object.
+
+    Parameters
+    ----------
+    filepath : str or Path
+        Input pickle file path
+
+    Returns
+    -------
+    lazy_opt : LazyOpt instance
+        The loaded optimization object
+
+    Examples
+    --------
+    lazy_opt = load_pickle('optimization.pkl')
+
+    # Access results
+    print(lazy_opt.x)
+    print(lazy_opt.objectives)
+
+    # Use trained surrogate
+    predictions = lazy_opt.f_hat.predict(new_points)
+    """
+
+    with open(filepath, 'rb') as f:
+        lazy_opt = pickle.load(f)
+
+    print(f"Loaded LazyOpt object from {filepath}")
+    print(f"  Total samples: {len(lazy_opt.x)}")
+    print(f"  Feasible: {sum(lazy_opt.feasible)}/{len(lazy_opt.feasible)}")
+    print(f"  Dimensions: {lazy_opt.hyper_params[6]}")
+
+    return lazy_opt
+
+
+def save_state(lazy_opt, filepath):
+    """
+    Save the state of LazyOpt as a pickle, excluding the solver function.
+
+    This is more robust than save_pickle() because it doesn't try to pickle
+    the solver_function callback, which often fails.
+
+    Saves:
+    - All optimization data (x, f, objectives, feasible)
+    - Trained surrogate models (f_hat, if available)
+    - Hyperparameters, bounds, options
+    - Grid discretization (xxx, xxx_)
+    - Seeds (x_seed, f_seed)
+
+    Does NOT save:
+    - solver_function (you'll need to provide it when resuming)
+
+    Parameters
+    ----------
+    lazy_opt : LazyOpt instance
+        The optimization object
+    filepath : str or Path
+        Output pickle file path
+
+    Examples
+    --------
+    # Save state
+    save_state(lazy_opt, 'opt_state.pkl')
+
+    # Load and resume optimization
+    state = load_state('opt_state.pkl')
+
+    # Create new LazyOpt with loaded state as seed
+    lazy_opt_resumed = LazyOpt(
+        solver_function=my_function,  # Must provide function again
+        bounds=state['bounds'],
+        hyper_params=state['hyper_params_dict'],
+        seed={'x': state['x'], 'objectives': state['objectives'],
+              'feasible': state['feasible']},
+        options=state['options']
+    )
+    """
+
+    state = {
+        # Core data
+        'x': lazy_opt.x,
+        'f': lazy_opt.f,
+        'feasible': lazy_opt.feasible,
+        'objectives': lazy_opt.objectives,
+
+        # Seeds
+        'x_seed': lazy_opt.x_seed,
+        'f_seed': lazy_opt.f_seed,
+
+        # Predictions and grid
+        'xxx': lazy_opt.xxx,
+        'xxx_': lazy_opt.xxx_ if hasattr(lazy_opt, 'xxx_') else None,
+        'x_': lazy_opt.x_ if hasattr(lazy_opt, 'x_') else None,
+        'f_hat_pred': lazy_opt.f_hat_pred if hasattr(lazy_opt, 'f_hat_pred') else None,
+        'true_pred': lazy_opt.true_pred if hasattr(lazy_opt, 'true_pred') else None,
+
+        # Surrogate model
+        'f_hat': lazy_opt.f_hat if hasattr(lazy_opt, 'f_hat') else None,
+
+        # Configuration
+        'bounds': lazy_opt.bounds,
+        'hyper_params': lazy_opt.hyper_params,
+        'options': lazy_opt.options,
+
+        # Derived for convenience
+        'hyper_params_dict': {
+            'surrogate': lazy_opt.hyper_params[0],
+            'epsilon': lazy_opt.hyper_params[1],
+            'number_of_DOE_samples': lazy_opt.hyper_params[2],
+            'number_of_iterations': lazy_opt.hyper_params[3],
+            'number_of_psuedo_candidates': lazy_opt.hyper_params[4],
+        }
+    }
+
+    with open(filepath, 'wb') as f:
+        pickle.dump(state, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    print(f"Saved LazyOpt state to {filepath}")
+    print(f"  Total samples: {len(state['x'])}")
+    print(f"  Feasible: {sum(state['feasible'])}/{len(state['feasible'])}")
+    print(f"  Surrogate model saved: {state['f_hat'] is not None}")
+
+
+def load_state(filepath):
+    """
+    Load a saved LazyOpt state.
+
+    Parameters
+    ----------
+    filepath : str or Path
+        Input pickle file path
+
+    Returns
+    -------
+    state : dict
+        Dictionary containing all saved state
+
+    Examples
+    --------
+    state = load_state('opt_state.pkl')
+
+    # Access data directly
+    print(state['x'])
+    print(state['objectives'])
+
+    # Resume optimization with saved state
+    lazy_opt = LazyOpt(
+        solver_function=my_func,
+        bounds=state['bounds'],
+        hyper_params=state['hyper_params_dict'],
+        seed={'x': state['x'], 'objectives': state['objectives'],
+              'feasible': state['feasible']},
+        options=state['options']
+    )
+    """
+
+    with open(filepath, 'rb') as f:
+        state = pickle.load(f)
+
+    print(f"Loaded LazyOpt state from {filepath}")
+    print(f"  Total samples: {len(state['x'])}")
+    print(f"  Feasible: {sum(state['feasible'])}/{len(state['feasible'])}")
+    print(f"  Dimensions: {state['hyper_params'][6]}")
+    print(f"  Surrogate model available: {state['f_hat'] is not None}")
+
+    return state
+
+
 # Example usage
 if __name__ == "__main__":
     # Example: creating sample data
@@ -259,3 +476,12 @@ if __name__ == "__main__":
 
     x_appended, f_appended, obj_appended = load_from_csv('test_results.csv')
     print(f"After append: {len(x_appended)} samples")
+
+    # Pickle example (requires a mock LazyOpt object)
+    print("\n=== Example: Pickle save/load ===")
+    print("Note: For full pickle example, save/load a real LazyOpt instance")
+    print("  save_pickle(lazy_opt, 'optimization.pkl')")
+    print("  lazy_opt = load_pickle('optimization.pkl')")
+    print("\nOr use save_state() for more robust saving:")
+    print("  save_state(lazy_opt, 'opt_state.pkl')")
+    print("  state = load_state('opt_state.pkl')")
