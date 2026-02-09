@@ -54,27 +54,18 @@ hyper_params = {'surrogate':'KNN',
                 'number_of_iterations':10,
                 'number_of_psuedo_candidates':1000
 }
-options = {'live_plot_draw':False,
+options = {'live_plot_draw':True,
            'live_plot_skip':5,
+           'latent_plot_draw':True,
            'number_of_processes':2,
            'assume_feasible_seeds':False
 }
 
 if __name__ == '__main__':
-    # lazy = LazyOpt(function_call)
-    # lazy.seeding(seed_2,assume_feasible=False)
-    # lazy.set_bounds(bounds)
-    # lazy.run_lazy_opt(hyper_params)
-
-
     lazy = LazyOpt(solver_function=function_call,
                    bounds=bounds,
                    hyper_params=hyper_params,
                    seed=seed_2,
                    options=options
                    )
-    from fast_plotting import plot_live_fast_mpl,plot_live_datashader,plot_live_plotly,create_projection_tour_app
-    plot_live_fast_mpl(lazy.x, lazy.f, lazy.x_, lazy.xxx_, lazy.objectives, output_path="plot_live_fast_mpl.png", dpi=50)
-    plot_live_datashader(lazy.x, lazy.f, lazy.x_, lazy.xxx_, lazy.objectives, output_path="live_plot_datashader.png",width=800, height=600)
-    plot_live_plotly(lazy.x, lazy.f, lazy.x_, lazy.xxx_, lazy.objectives, output_path="plot_live_plotly.html")
-    create_projection_tour_app(lazy.x, lazy.f, lazy.objectives, port=8050)
+
