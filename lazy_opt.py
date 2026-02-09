@@ -117,14 +117,14 @@ class LazyOpt():
                 f"Example: return True, (value,)"
             )
 
-        # Feasbile is defined as False!, the optimisation is formulated as a minimization problem
+        # Assume that Feasbile==True, means that the design is feasible
         print("\n=== function_call ===")
         for i, obj in enumerate(objectives, 1):
             print(f"f{i}     :       {obj:.2f}")
         if feasible:
-            print(f"feasible      :       [ ]")
-        else:
             print(f"feasible      :       [X]")
+        else:
+            print(f"feasible      :       [ ]")
 
         return feasible, objectives
 
