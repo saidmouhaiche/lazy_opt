@@ -1,32 +1,19 @@
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import matplotlib.colors as mcolors
-from mpl_toolkits.mplot3d import Axes3D
-
-from sklearn.manifold import TSNE
-from sklearn.decomposition import PCA
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn import svm
+from scipy.stats import qmc
 
-import math
-import json
-import shutil
-import time
-import sys
-from multiprocessing import Pool
-
-import pandas as pd
 import numpy as np
-from numpy import deg2rad
 from numpy import array, empty, random, linspace, meshgrid, zeros, reshape, hstack, count_nonzero, logical_not, \
     count_nonzero, argmax, vstack
 from numpy.random import beta
-from numpy import array, empty, random, linspace, meshgrid, zeros, reshape, hstack
+import time
+import matplotlib
+matplotlib.use('Agg')
 
-from scipy.stats import qmc
-
+from multiprocessing import Pool
 from lazy_plot import plot_live, plot_latent
+from lazy_save import save_incremental
+
 
 class LazyOpt():
     '''
@@ -55,9 +42,18 @@ class LazyOpt():
     '''
 
     def __init__(self, solver_function=None,bounds=None,hyper_params=None,seed=None,options=None):
-
+        self.options = options
         self.solver_function = solver_function
-        self.bounds = bounds
+        self.bounds = self.set_bounds(bounds)
+        # if self.options.get('save_to_csv')
+        if self.options.get('live_plot_draw', False):
+            live_plot_draw_boolean = options['live_plot_draw']
+        else:
+            live_plot_draw_boolean = False
+        if self.options.get('number_of_processes', False):
+            number_of_processes = options['number_of_processes']
+        else:
+            number_of_processes = 1
         self.hyper_params = [
             hyper_params['surrogate'], # surr = hyper_params[0]
             hyper_params['epsilon'], # epsilon = hyper_params[1]
@@ -65,12 +61,21 @@ class LazyOpt():
             hyper_params['number_of_iterations'], # iter_max = hyper_params[3]
             hyper_params['number_of_psuedo_candidates'], # res = hyper_params[4]
             1, # k = hyper_params[5]
-            int(len(bounds)/2), # dims = hyper_params[6]
-            options['live_plot_draw'], # plot_boolean = hyper_params[7]
-            options['number_of_processes'] # threads = hyper_params[8]
+            int(len(self.bounds)/2), # dims = hyper_params[6]
+            live_plot_draw_boolean, # plot_boolean = hyper_params[7]
+            number_of_processes # threads = hyper_params[8]
         ]
+        if self.options.get('save_csv_filename',False):
+            self.save_csv_filename = self.options['save_csv_filename']
+        else:
+            self.save_csv_filename = 'lazy_opt_results.csv'
+
+        if self.options.get('save_csv_boolean',False):
+            self.save_csv_boolean = self.options['save_csv_boolean']
+        else:
+            self.save_csv_boolean = False
+
         self.seed = seed
-        self.options = options
 
         # results
         self.surrogate_pred = []
@@ -117,14 +122,14 @@ class LazyOpt():
                 f"Example: return True, (value,)"
             )
 
-        # Assume that Feasbile==True, means that the design is feasible
+        # Assume feasible=True means that the design is feasible
         print("\n=== function_call ===")
         for i, obj in enumerate(objectives, 1):
             print(f"f{i}     :       {obj:.2f}")
         if feasible:
-            print(f"feasible      :       [X]")
-        else:
             print(f"feasible      :       [ ]")
+        else:
+            print(f"feasible      :       [X]")
 
         return feasible, objectives
 
@@ -306,7 +311,6 @@ class LazyOpt():
         return scaled_input
 
     def grid_discretize(self, res, bounds):
-        from scipy.stats import qmc
         dims = self.hyper_params[6]
 
         # Total number of samples = res^dims
@@ -354,7 +358,6 @@ class LazyOpt():
             f_hat = KNeighborsClassifier(n_neighbors=k)
             f_hat.fit(x, f.ravel())
         elif model == 'SVM':
-            from sklearn import svm
             f_hat = svm.SVC(kernel='rbf')
             f_hat.fit(x, f.ravel())
         else:
@@ -381,8 +384,87 @@ class LazyOpt():
         # small epsilon to avoid divide-by-zero
 
     def set_bounds(self, bounds):
-        self.bounds = bounds
-        return
+        """
+        Set optimization bounds in multiple formats.
+        WARNING: this function is written with claude
+        Usage:
+        ----------
+          # List of tuples - most readable!
+          opt.set_bounds([(0, 1), (-5, 5), (0, 10)])
+
+          # Dictionary - self-documenting
+          opt.set_bounds({'x': (0, 1), 'y': (-5, 5), 'z': (0, 10)})
+
+          # Flat list - original format still works
+          opt.set_bounds([0, 1, -5, 5, 0, 10])
+
+        Parameters
+        ----------
+        bounds : list, tuple, or dict
+            Can be specified in several formats:
+
+            1. List of tuples: [(lower1, upper1), (lower2, upper2), ...]
+               Example: [(0, 1), (-5, 5), (0, 10)]
+
+            2. Dictionary: {'param_name': (lower, upper), ...}
+               Example: {'x': (0, 1), 'y': (-5, 5), 'z': (0, 10)}
+
+            3. Flat list: [lower1, upper1, lower2, upper2, ...]
+               Example: [0, 1, -5, 5, 0, 10]
+
+        Examples
+        --------
+        # List of tuples (recommended for readability)
+        opt.set_bounds([(0, 1), (-5, 5), (0, 10)])
+
+        # Dictionary with parameter names
+        opt.set_bounds({'x': (0, 1), 'y': (-5, 5), 'z': (0, 10)})
+
+        # Flat list (original format)
+        opt.set_bounds([0, 1, -5, 5, 0, 10])
+        """
+
+        # Case 1: Dictionary format
+        if isinstance(bounds, dict):
+            param_names = sorted(bounds.keys())
+            bounds_list = []
+            for name in param_names:
+                low, high = bounds[name]
+                if low >= high:
+                    raise ValueError(f"Lower bound {low} must be less than upper bound {high} for '{name}'")
+                bounds_list.extend([low, high])
+            print(f"Bounds set for {len(param_names)} dimensions: {param_names}")
+            return bounds_list
+
+        # Case 2: List of tuples
+        if isinstance(bounds, (list, tuple)) and len(bounds) > 0 and isinstance(bounds[0], (list, tuple)):
+            bounds_list = []
+            for i, (low, high) in enumerate(bounds):
+                if low >= high:
+                    raise ValueError(f"Lower bound {low} must be less than upper bound {high} at dimension {i}")
+                bounds_list.extend([low, high])
+            print(f"Bounds set for {len(bounds)} dimensions")
+            return bounds_list
+
+        # Case 3: Flat list (legacy format)
+        if isinstance(bounds, (list, tuple)):
+            if len(bounds) % 2 != 0:
+                raise ValueError(f"Flat bounds list must have even length, got {len(bounds)}")
+            # Validate lower < upper for each pair
+            for i in range(0, len(bounds), 2):
+                if bounds[i] >= bounds[i + 1]:
+                    raise ValueError(
+                        f"Lower bound {bounds[i]} must be less than upper bound {bounds[i + 1]} at dimension {i // 2}")
+            print(f"Bounds set for {len(bounds) // 2} dimensions")
+            return list(bounds)
+
+        # Unrecognized format
+        raise ValueError(
+            "Unrecognized bounds format. Use:\n"
+            "  - List of tuples: [(0, 1), (-5, 5)]\n"
+            "  - Dictionary: {'x': (0, 1), 'y': (-5, 5)}\n"
+            "  - Flat list: [0, 1, -5, 5]"
+        )
 
     def run_lazy_opt(self):
         surr = self.hyper_params[0]
@@ -416,7 +498,6 @@ class LazyOpt():
         x_ = self.normalise_inputs(x)
 
         # create multiprocessing pool
-        from multiprocessing import Pool
         pool = None
         if threads > 1:
             print("\n WARNING: Using multiprocessing with threads > 1")
@@ -496,6 +577,9 @@ class LazyOpt():
             print(f'time for iter: {end-start}s')
             if plot_boolean:
                 plot_live(x, f, x_, xxx_, self.objectives)
+
+            if self.save_csv_boolean:
+                save_incremental(self, self.save_csv_filename, iteration=iter)
 
         # self.surrogate_pred = f_hat_pred.reshape((res,) * dims)  # only if you want to store reshaped
         self.f_hat_pred = f_hat_pred

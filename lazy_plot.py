@@ -100,7 +100,7 @@ def plot_live(x, f, x_, xxx_, objectives):
     ax.set_title("Latent Design Space with KNN Boundary")
     ax.grid(True, zorder=1)
 
-    plt.savefig("live_plot.png", dpi=50)
+    plt.savefig("live_plot.png", dpi=150)
     print('latent plot generated')
     plt.close()
 
