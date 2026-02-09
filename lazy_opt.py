@@ -52,14 +52,25 @@ class LazyOpt():
                     1]      # number of threads or how many function calls per iteration
     '''
 
-    def __init__(self, solver_function):
-        self.solver_function = solver_function
+    def __init__(self, solver_function=None,bounds=None,hyper_params=None,seed=None,options=None):
 
-        # store hyperparams
-        self.hyper_params = []
+        self.solver_function = solver_function
+        self.bounds = bounds
+        self.hyper_params = [
+            hyper_params['surrogate'], # surr = hyper_params[0]
+            hyper_params['epsilon'], # epsilon = hyper_params[1]
+            hyper_params['number_of_DOE_samples'], # number_of_samples = hyper_params[2]
+            hyper_params['number_of_iterations'], # iter_max = hyper_params[3]
+            hyper_params['number_of_psuedo_candidates'], # res = hyper_params[4]
+            1, # k = hyper_params[5]
+            int(len(bounds)/2), # dims = hyper_params[6]
+            options['live_plot_draw'], # plot_boolean = hyper_params[7]
+            options['number_of_processes'] # threads = hyper_params[8]
+        ]
+        self.seed = seed
+        self.options = options
 
         # results
-
         self.surrogate_pred = []
         self.true_pred = []
         self.xxx = []
@@ -72,13 +83,17 @@ class LazyOpt():
         self.x_ = []
         self.xxx_ = []
 
-        self.bounds = []
         self.x_seed = []
         self.f_seed = []
 
         # store solver outputs
         self.objectives = []
         self.feasible = []
+
+        # run functions here
+        self.seeding(seed)
+        self.run_lazy_opt()
+
 
     def function_call(self, input_row):
         if self.solver_function is None:
@@ -111,43 +126,170 @@ class LazyOpt():
 
         return feasible, objectives
 
-    def seeding(self, seed_tuple, assume_feasible=False):
+    def seeding(self, seed):
         '''
-          Single seed (backward compatible):
+            WARNING:
+            this function was written by claude
+            -----------
+          Single seed, no objectives:
           seed = np.array([0.1, 0.2, 0.3, 0.4, 0.5])  # 1D array
           lazy.seeding(seed)
 
-          Multiple seeds:
+          Multiple seeds, no objectives:
           seeds = np.array([
               [0.1, 0.2, 0.3, 0.4, 0.5],  # seed 1
               [0.2, 0.3, 0.4, 0.5, 0.6],  # seed 2
               [0.3, 0.4, 0.5, 0.6, 0.7],  # seed 3
           ])
           lazy.seeding(seeds)
+
+          Multiple seeds WITH objectives (as list of tuples):
+          seeds = [
+              ([0.1, 0.2, 0.3, 0.4, 0.5], (10.5,)),           # (x_values, objectives_tuple)
+              ([0.2, 0.3, 0.4, 0.5, 0.6], (15.2,)),           # single objective
+              ([0.3, 0.4, 0.5, 0.6, 0.7], (20.1, 5.3, 8.2))  # multi-objective
+          ]
+          lazy.seeding(seeds, assume_feasible=True)
+
+          Multiple seeds WITH objectives (as dict):
+          seeds = {
+              'x': np.array([[0.1, 0.2, 0.3, 0.4, 0.5],
+                            [0.2, 0.3, 0.4, 0.5, 0.6]]),
+              'objectives': [(10.5,), (15.2,)],              # list of tuples
+              'feasible': [True, False]                      # optional
+          }
+          lazy.seeding(seeds)
+
+        ==================================
+          Usage Examples:
+
+          # Example 1: Simple seeds, will evaluate function
+          seed_simple = np.array([[0.2, 0.3], [0.4, 0.5]])
+          lazy.seeding(seed_simple)
+
+          # Example 2: Seeds with known objectives (skip function
+          evaluation)
+          seeds_with_obj = [
+              ([0.1, 0.2, 0.3], (100.5,)),      # x_values,
+          (objective1,)
+              ([0.2, 0.3, 0.4], (150.2,)),
+              ([0.3, 0.4, 0.5], (200.8,))
+          ]
+          lazy.seeding(seeds_with_obj, assume_feasible=True)
+
+          # Example 3: Dict format with feasibility info
+          seeds_dict = {
+              'x': np.array([[0.1, 0.2, 0.3],
+                             [0.2, 0.3, 0.4],
+                             [0.3, 0.4, 0.5]]),
+              'objectives': [(100.5,), (150.2,), (200.8,)],
+              'feasible': [True, True, False]
+          }
+          lazy.seeding(seeds_dict)
+
+          # Example 4: Multi-objective
+          seeds_multi = [
+              ([0.1, 0.2], (10.5, 20.3, 5.1)),    # 3 objectives
+              ([0.2, 0.3], (15.2, 18.7, 6.2)),
+          ]
+          lazy.seeding(seeds_multi, assume_feasible=True)
+
         '''
-        # check seed_tuple is (n_seeds,dims)
-        seed = np.atleast_2d(seed_tuple)
-        n_seeds = seed.shape[0]
-        self.x_seed = seed
 
-        f_seed_list = []
-        if not assume_feasible:
-            for i in range(n_seeds):
-                seed_i = seed[i:i+1,:] #(seed, dims)
-                feasible, f1 = self.function_call(seed_i)
+        if seed is None:
+            print("No seed provided, will rely on DoE sampling only")
+            return
 
-                self.feasible.append(feasible)
-                self.objectives.append(f1)
+        assume_feasible = self.options['assume_feasible_seeds']
 
-                f_seed_list.append(feasible)
-                print(f'seeding {i + 1}/{n_seeds}')
+        # Detect format: dict, list of tuples, or plain numpy array
+        if isinstance(seed, dict):
+            # Dictionary format with x, objectives, and optionally feasible
+            x_seed = np.atleast_2d(seed['x'])
+            n_seeds = x_seed.shape[0]
+            self.x_seed = x_seed
+
+            # Extract objectives
+            objectives_provided = seed.get('objectives', None)
+            feasible_provided = seed.get('feasible', None)
+
+            if objectives_provided is not None:
+                if len(objectives_provided) != n_seeds:
+                    raise ValueError(f"Number of objectives ({len(objectives_provided)}) must match number of seeds ({n_seeds})")
+
+                # Store objectives and feasibility
+                for i in range(n_seeds):
+                    obj = objectives_provided[i]
+                    if not isinstance(obj, tuple):
+                        obj = (obj,)  # Convert to tuple if single value
+                    self.objectives.append(obj)
+
+                    # Get feasibility
+                    if feasible_provided is not None:
+                        self.feasible.append(feasible_provided[i])
+                    else:
+                        # Assume feasible if not provided
+                        self.feasible.append(True)
+
+                # Create f_seed array from feasible values
+                self.f_seed = np.array(self.feasible[-n_seeds:]).reshape(-1, 1)
+                print(f'Loaded {n_seeds} seeds with provided objectives')
+                return
+
+        elif isinstance(seed, list) and len(seed) > 0 and isinstance(seed[0], tuple):
+            # List of tuples format: [(x_values, objectives), ...]
+            n_seeds = len(seed)
+
+            # Extract x values and objectives
+            x_list = []
+            for i, (x_vals, obj_vals) in enumerate(seed):
+                x_list.append(x_vals)
+
+                # Ensure objectives is a tuple
+                if not isinstance(obj_vals, tuple):
+                    if hasattr(obj_vals, '__iter__'):
+                        obj_vals = tuple(obj_vals)
+                    else:
+                        obj_vals = (obj_vals,)
+
+                self.objectives.append(obj_vals)
+                self.feasible.append(assume_feasible or True)
+
+            self.x_seed = np.array(x_list)
+            self.f_seed = np.array(self.feasible[-n_seeds:]).reshape(-1, 1)
+            print(f'Loaded {n_seeds} seeds with provided objectives')
+            return
+
         else:
-            # assume that f=True
-            for i in range(n_seeds): f_seed_list.append(True)
-            print(f'seeding {i + 1}/{n_seeds}')
+            # Plain numpy array format - no objectives provided
+            seed = np.atleast_2d(seed)
+            n_seeds = seed.shape[0]
+            self.x_seed = seed
 
-        # Stack all feasibility results
-        self.f_seed = np.array(f_seed_list).reshape(-1, 1)
+            f_seed_list = []
+            if not assume_feasible:
+                # Evaluate each seed to get objectives
+                for i in range(n_seeds):
+                    seed_i = seed[i:i+1, :]  # (1, dims)
+                    feasible, obj_tuple = self.function_call(seed_i)
+
+                    self.feasible.append(feasible)
+                    self.objectives.append(obj_tuple)
+                    f_seed_list.append(feasible)
+                    print(f'seeding {i + 1}/{n_seeds}')
+            else:
+                # Assume all seeds are feasible, but still need to evaluate for objectives
+                for i in range(n_seeds):
+                    seed_i = seed[i:i+1, :]
+                    feasible, obj_tuple = self.function_call(seed_i)
+
+                    # Override feasible to True
+                    self.feasible.append(True)
+                    self.objectives.append(obj_tuple)
+                    f_seed_list.append(True)
+                    print(f'seeding {i + 1}/{n_seeds} (assumed feasible)')
+
+            self.f_seed = np.array(f_seed_list).reshape(-1, 1)
         return
 
     def plot_live(self, x, f, x_, xxx_):
@@ -399,18 +541,16 @@ class LazyOpt():
         self.bounds = bounds
         return
 
-    def run_lazy_opt(self, hyper_params):
-        self.hyper_params = hyper_params
-
-        surr = hyper_params[0]
-        epsilon = hyper_params[1]
-        number_of_samples = hyper_params[2]
-        iter_max = hyper_params[3]
-        res = hyper_params[4]
-        k = hyper_params[5]
-        dims = hyper_params[6]
-        plot_boolean = hyper_params[7]
-        threads = hyper_params[8]
+    def run_lazy_opt(self):
+        surr = self.hyper_params[0]
+        epsilon = self.hyper_params[1]
+        number_of_samples = self.hyper_params[2]
+        iter_max = self.hyper_params[3]
+        res = self.hyper_params[4]
+        k = self.hyper_params[5]
+        dims = self.hyper_params[6]
+        plot_boolean = self.hyper_params[7]
+        threads = self.hyper_params[8]
 
         # bounds = [lower_x, upper_x, lower_x1, upper_x2...]
         bounds = self.bounds

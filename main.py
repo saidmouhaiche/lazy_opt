@@ -21,16 +21,7 @@ def function_call(input_row):
 
     return feasible, (f1,)
 
-# surr = hyper_params[0]
-# epsilon = hyper_params[1]
-# number_of_samples = hyper_params[2]
-# iter_max = hyper_params[3]
-# res = hyper_params[4]
-# k = hyper_params[5]
-# dims = hyper_params[6]
-# threads = hyper_params[7]
-#
-# # bounds = [lower_x1, upper_x1, lower_x2, upper_x2...]
+# bounds = [lower_x1, upper_x1, lower_x2, upper_x2...]
 bounds = [0,0.3,      # nose profile
           0.3, 1,       # nose cone length
           0.1, 0.4,     # fin height
@@ -57,20 +48,33 @@ seed = np.array([[-1,        # nose profile
 
 seed_2 = np.array([[0.2,0.3,0.1,0,-0.6,0.2,0,0.03,4.6e-5,0.4,-0.75],[0.25,0.35,0.15,0,-0.65,0.25,0.05,0.035,4.65e-5,0.45,-0.755]])
 
-# hyper_params = [surr, epsilon, number_of_samples, iter_max, res, k-folds, dimentions, liveplot boolean, number of threads]
-res = 1000
-hyper_params = ['KNN',  # classificaiton surrogate
-                1,      # epsilon (exploration-explolitation parameter)
-                30,     # number of samples using DoE (design of experiment)
-                10,     # maximum iterations
-                res,    # resoultion of discritsation
-                1,      # k-folds - depreciated
-                11,     # number of dimentions
-                1,      # boolean to draw a fast latent plot
-                2]      # number of threads or how many function calls per iteration
+hyper_params = {'surrogate':'KNN',
+                'epsilon':1,
+                'number_of_DOE_samples':30,
+                'number_of_iterations':10,
+                'number_of_psuedo_candidates':1000
+}
+options = {'live_plot_draw':False,
+           'live_plot_skip':5,
+           'number_of_processes':2,
+           'assume_feasible_seeds':False
+}
 
 if __name__ == '__main__':
-    lazy = LazyOpt(function_call)
-    lazy.seeding(seed_2,assume_feasible=False)
-    lazy.set_bounds(bounds)
-    lazy.run_lazy_opt(hyper_params)
+    # lazy = LazyOpt(function_call)
+    # lazy.seeding(seed_2,assume_feasible=False)
+    # lazy.set_bounds(bounds)
+    # lazy.run_lazy_opt(hyper_params)
+
+
+    lazy = LazyOpt(solver_function=function_call,
+                   bounds=bounds,
+                   hyper_params=hyper_params,
+                   seed=seed_2,
+                   options=options
+                   )
+    from fast_plotting import plot_live_fast_mpl,plot_live_datashader,plot_live_plotly,create_projection_tour_app
+    plot_live_fast_mpl(lazy.x, lazy.f, lazy.x_, lazy.xxx_, lazy.objectives, output_path="plot_live_fast_mpl.png", dpi=50)
+    plot_live_datashader(lazy.x, lazy.f, lazy.x_, lazy.xxx_, lazy.objectives, output_path="live_plot_datashader.png",width=800, height=600)
+    plot_live_plotly(lazy.x, lazy.f, lazy.x_, lazy.xxx_, lazy.objectives, output_path="plot_live_plotly.html")
+    create_projection_tour_app(lazy.x, lazy.f, lazy.objectives, port=8050)
