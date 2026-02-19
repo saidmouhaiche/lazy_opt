@@ -587,8 +587,7 @@ class LazyOpt():
         self.x = x
         self.f = f
         # the old f_hat is trained on 1 less point that is appended at the end of the loop
-        f_hat = KNeighborsClassifier(n_neighbors=k)
-        f_hat.fit(x_, f.ravel())
+        f_hat = self.supervised_training_lite(x_, f, model='KNN')
         self.f_hat = f_hat
         self.x_ = x_
         self.xxx_ = xxx_

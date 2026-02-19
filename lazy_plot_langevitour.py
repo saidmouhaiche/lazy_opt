@@ -39,48 +39,48 @@ def plot_langevitour(x, f, objectives, feasible, bounds=None, output_file="optim
         return None
 
     # Convert data to proper format
-    X = x.copy()
+    X = x
     n_points = X.shape[0]
     dims = X.shape[1]
 
-    # Create groups based on feasibility and objective value quartiles
-    # Group 0: infeasible (red)
-    # Groups 1-4: feasible, colored by objective value quartile (green to yellow)
-    f1_values = np.array([obj[0] for obj in objectives])
-
-    # Convert feasible to boolean numpy array
-    feasible_mask = np.array([bool(f) for f in feasible])
-
-    # Get objective values for feasible points only
-    feasible_f1 = f1_values[feasible_mask]
-
-    # Compute quartile thresholds once (if we have feasible points)
-    if len(feasible_f1) > 0:
-        quartile_thresholds = np.percentile(feasible_f1, [25, 50, 75])
-    else:
-        quartile_thresholds = None
-
-    # Define group names
-    group_names = [
-        "Infeasible",
-        "Best 25% (feasible)",
-        "25-50% (feasible)",
-        "50-75% (feasible)",
-        "Worst 25% (feasible)"
-    ]
-
-    groups = []
-
-    for i in range(n_points):
-        if not feasible[i]:
-            groups.append(group_names[0])  # Infeasible
-        else:
-            # Divide feasible points into quartiles based on objective value
-            if quartile_thresholds is not None:
-                quartile = np.searchsorted(quartile_thresholds, f1_values[i])
-                groups.append(group_names[quartile + 1])  # Groups 1-4
-            else:
-                groups.append(group_names[1])
+    # # Create groups based on feasibility and objective value quartiles
+    # # Group 0: infeasible (red)
+    # # Groups 1-4: feasible, colored by objective value quartile (green to yellow)
+    # f1_values = np.array([obj[0] for obj in objectives])
+    #
+    # # Convert feasible to boolean numpy array
+    # feasible_mask = np.array([bool(f) for f in feasible])
+    #
+    # # Get objective values for feasible points only
+    # feasible_f1 = f1_values[feasible_mask]
+    #
+    # # Compute quartile thresholds once (if we have feasible points)
+    # if len(feasible_f1) > 0:
+    #     quartile_thresholds = np.percentile(feasible_f1, [25, 50, 75])
+    # else:
+    #     quartile_thresholds = None
+    #
+    # # Define group names
+    # group_names = [
+    #     "Infeasible",
+    #     "Best 25% (feasible)",
+    #     "25-50% (feasible)",
+    #     "50-75% (feasible)",
+    #     "Worst 25% (feasible)"
+    # ]
+    #
+    # groups = []
+    #
+    # for i in range(n_points):
+    #     if not feasible[i]:
+    #         groups.append(group_names[0])  # Infeasible
+    #     else:
+    #         # Divide feasible points into quartiles based on objective value
+    #         if quartile_thresholds is not None:
+    #             quartile = np.searchsorted(quartile_thresholds, f1_values[i])
+    #             groups.append(group_names[quartile + 1])  # Groups 1-4
+    #         else:
+    #             groups.append(group_names[1])
 
     # Create axis labels
     if bounds is not None:
@@ -96,12 +96,12 @@ def plot_langevitour(x, f, objectives, feasible, bounds=None, output_file="optim
     print("\nCreating langevitour visualization...")
     print(f"  Points: {n_points}")
     print(f"  Dimensions: {dims}")
-    print(f"  Groups: {len(set(groups))}")
+    # print(f"  Groups: {len(set(groups))}")
     print(f"  Feasible points: {sum(feasible)}")
 
     tour = Langevitour(
         data=X,
-        group=groups,
+        # group=groups,
         column_names=axis_labels,
         point_size=2.5
     )
@@ -135,7 +135,7 @@ def plot_langevitour_from_lazy_opt(lazy_opt, output_file="optimization_tour.html
     tour : Langevitour object
     """
     return plot_langevitour(
-        x=lazy_opt.x,
+        x=lazy_opt.x_,
         f=lazy_opt.f,
         objectives=lazy_opt.objectives,
         feasible=lazy_opt.feasible,

@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="uv (keplr_gui)" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="uv (keplr_gui)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="uv (lazy_opt)" project-jdk-type="Python SDK" />
 </project>

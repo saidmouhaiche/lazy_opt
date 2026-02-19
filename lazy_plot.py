@@ -1,4 +1,3 @@
-from sklearn.manifold import TSNE
 from sklearn.neighbors import KNeighborsClassifier
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
@@ -6,41 +5,98 @@ import matplotlib.colors as mcolors
 import numpy as np
 import time
 
-from sklearn.manifold import TSNE
+# from sklearn.manifold import TSNE
+from sklearn.manifold import TSNE as sklearnTSNE
+# from tsnecuda import TSNE
+from openTSNE.sklearn import TSNE as openTSNE
 from sklearn.decomposition import PCA
 from sklearn.neighbors import KNeighborsClassifier
 
-def plot_live(x, f, x_, xxx_, objectives):
-
-    # give a binary mask of feasiblity, so if feas==1, then it is feasible.
-    feas = np.array([int(fi[0] < 1e-3) for fi in f])
-
+def latent_pca(x_, xxx_):
     # Stack real and sample points together
     x_xxx_ = np.vstack([x_, xxx_])
+    x_len = x_.shape[0]
 
-    # Reduce to 2D latent space
-    start = time.time()
     x_xxx_latent = PCA(n_components=2).fit_transform(x_xxx_)
 
+    xxx__ = x_xxx_latent[x_len:, :]
+    x__ = x_xxx_latent[:x_len, :]
+
+    return x__, xxx__
+
+def latent_tsne(x_):
     # Split back to x and xxx projections
-    x_len = x.shape[0]
+    x_len = x_.shape[0]
     if x_len < 30:
         raise ValueError(f"TSNE needs a minimum of 30 points, or reduce the perplexity(k-neighbors) parameter")
-    x__1 = x_xxx_latent[:x_len, :]
-    x__ = TSNE(n_components=2).fit_transform(x__1)
-    xxx__ = x_xxx_latent[x_len:, :]
-    x_len = x.shape[0]
-    x__ = x_xxx_latent[:x_len, :]
-    end = time.time()
-    print(
-        f'\nFAST latent embedding took: {end - start}s\nFor a more structured plot please use TSNE on x__1=PCA(x_xxx_) with Mahalanobis distance')
 
+    # CUDA GPU accelerated tsne
+    x__ = openTSNE(n_components=2,n_jobs=-1).fit_transform(x_)
+
+    # tsne is too slow to return xxx__
+    return x__
+
+def latent_tsne_3d(x_):
+    # Split back to x and xxx projections
+    x_len = x_.shape[0]
+    if x_len < 30:
+        raise ValueError(f"TSNE needs a minimum of 30 points, or reduce the perplexity(k-neighbors) parameter")
+
+    x__ = sklearnTSNE(n_components=3, n_jobs=-1).fit_transform(x_)
+
+    return x__
+
+
+def latent_knn(x__,xxx__,f):
     # Train KNN on the latent projection
     k = 1
     f_hat_latent = KNeighborsClassifier(n_neighbors=k)
     f_hat_latent.fit(x__, f.ravel())
     f_hat_pred_latent = f_hat_latent.predict(xxx__)
     f_hat_pred_latent = f_hat_pred_latent.reshape(-1, 1)
+
+    return f_hat_pred_latent
+
+def latent_pca_tsne(x_,xxx_):
+    x__pca, xxx__pca = latent_pca(x_, xxx_)
+    x__ = latent_tsne(x__pca)
+    return x__
+
+
+def plot_live(x, f, x_, xxx_, objectives):
+
+    # give a binary mask of feasiblity, so if feas==1, then it is feasible.
+    feas = np.array([int(fi[0] < 1e-3) for fi in f])
+
+    # # Stack real and sample points together
+    # x_xxx_ = np.vstack([x_, xxx_])
+    #
+    # # Reduce to 2D latent space
+    # start = time.time()
+    # x_xxx_latent = PCA(n_components=2).fit_transform(x_xxx_)
+    #
+    # # Split back to x and xxx projections
+    # x_len = x.shape[0]
+    # if x_len < 30:
+    #     raise ValueError(f"TSNE needs a minimum of 30 points, or reduce the perplexity(k-neighbors) parameter")
+    # x__1 = x_xxx_latent[:x_len, :]
+    # x__ = TSNE(n_components=2).fit_transform(x__1)
+    # xxx__ = x_xxx_latent[x_len:, :]
+    # x_len = x.shape[0]
+    # x__ = x_xxx_latent[:x_len, :]
+    # end = time.time()
+    # print(
+    #     f'\nFAST latent embedding took: {end - start}s\nFor a more structured plot please use TSNE on x__1=PCA(x_xxx_) with Mahalanobis distance')
+    #
+    # # Train KNN on the latent projection
+    # k = 1
+    # f_hat_latent = KNeighborsClassifier(n_neighbors=k)
+    # f_hat_latent.fit(x__, f.ravel())
+    # f_hat_pred_latent = f_hat_latent.predict(xxx__)
+    # f_hat_pred_latent = f_hat_pred_latent.reshape(-1, 1)
+
+    x__,xxx__ = latent_pca(x_, xxx_)
+    f_hat_pred_latent = latent_knn(x__,xxx__,f)
 
     # Estimate resolution
     res = int(np.sqrt(xxx__.shape[0]))
@@ -109,24 +165,26 @@ def plot_latent(x, f, x_, xxx_, objectives):
     # give a binary mask of feasiblity, so if feas==1, then it is feasible.
     feas = np.array([int(fi[0] < 1e-3) for fi in f])
 
-    # Stack real and sample points together
-    x_xxx_ = np.vstack([x_, xxx_])
+    # # Stack real and sample points together
+    # x_xxx_ = np.vstack([x_, xxx_])
+    #
+    # # Reduce to 2D latent space
+    # start = time.time()
+    # x_xxx_latent = PCA(n_components=2).fit_transform(x_xxx_)
+    #
+    # # Split back to x and xxx projections
+    # x_len = x.shape[0]
+    # if x_len < 30:
+    #     raise ValueError(f"TSNE needs a minimum of 30 points, or reduce the perplexity(k-neighbors) parameter")
+    # x__1 = x_xxx_latent[:x_len, :]
+    # x__ = TSNE(n_components=2).fit_transform(x__1)
+    # # from MulticoreTSNE import MulticoreTSNE as TSNE
+    # # tsne = TSNE(n_jobs=4) # n_jobs is number of cores (4=1.2x speedup)
+    # # x__ = tsne(n_components=2).fit_transform(x__1)
+    # end = time.time()
+    # print(f'\nFAST latent embedding took: {end - start}s\nFor a more structured plot please use TSNE on x__1=PCA(x_xxx_) with Mahalanobis distance')
 
-    # Reduce to 2D latent space
-    start = time.time()
-    x_xxx_latent = PCA(n_components=2).fit_transform(x_xxx_)
-
-    # Split back to x and xxx projections
-    x_len = x.shape[0]
-    if x_len < 30:
-        raise ValueError(f"TSNE needs a minimum of 30 points, or reduce the perplexity(k-neighbors) parameter")
-    x__1 = x_xxx_latent[:x_len, :]
-    x__ = TSNE(n_components=2).fit_transform(x__1)
-    # from MulticoreTSNE import MulticoreTSNE as TSNE
-    # tsne = TSNE(n_jobs=4) # n_jobs is number of cores (4=1.2x speedup)
-    # x__ = tsne(n_components=2).fit_transform(x__1)
-    end = time.time()
-    print(f'\nFAST latent embedding took: {end - start}s\nFor a more structured plot please use TSNE on x__1=PCA(x_xxx_) with Mahalanobis distance')
+    x__ = latent_pca_tsne(x_, xxx_)
 
     # === Plotting ===
     fig, ax = plt.subplots()
