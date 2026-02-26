@@ -23,4 +23,6 @@ dependencies = [
     "ipykernel>=7.2.0",
     "tsnecuda>=3.0.1",
     "opentsne>=1.0.4",
+    "faiss-cpu>=1.13.2",
+    "hnswlib>=0.8.0",
 ]

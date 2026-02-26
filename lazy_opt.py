@@ -1,6 +1,7 @@
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn import svm
 from scipy.stats import qmc
+import faiss
 
 import numpy as np
 from numpy import array, empty, random, linspace, meshgrid, zeros, reshape, hstack, count_nonzero, logical_not, \
@@ -15,7 +16,7 @@ from lazy_plot import plot_live, plot_latent
 from lazy_save import save_incremental
 
 
-class LazyOpt():
+class lazy_opt():
     '''
     TODO:
     0. allow seeding to be optitnal but return a warning
@@ -44,7 +45,7 @@ class LazyOpt():
     def __init__(self, solver_function=None,bounds=None,hyper_params=None,seed=None,options=None):
         self.options = options
         self.solver_function = solver_function
-        self.bounds = self.set_bounds(bounds)
+        self.bounds = self._set_bounds(bounds)
         # if self.options.get('save_to_csv')
         if self.options.get('live_plot_draw', False):
             live_plot_draw_boolean = options['live_plot_draw']
@@ -75,6 +76,11 @@ class LazyOpt():
         else:
             self.save_csv_boolean = False
 
+        if self.options.get('verbose', False):
+            self.verbose = self.options['verbose']
+        else:
+            self.verbose = False
+
         self.seed = seed
 
         # results
@@ -96,13 +102,14 @@ class LazyOpt():
         # store solver outputs
         self.objectives = []
         self.feasible = []
+        self.iteration_numbers = []
 
         # run functions here
-        self.seeding(seed)
-        self.run_lazy_opt()
+        self._seeding(seed)
+        self._run_lazy_opt()
 
 
-    def function_call(self, input_row):
+    def _function_call(self, input_row):
         if self.solver_function is None:
             raise ValueError("No objective function provided! Pass one to __init__")
 
@@ -122,18 +129,19 @@ class LazyOpt():
                 f"Example: return True, (value,)"
             )
 
-        # Assume feasible=True means that the design is feasible
-        print("\n=== function_call ===")
-        for i, obj in enumerate(objectives, 1):
-            print(f"f{i}     :       {obj:.2f}")
-        if feasible:
-            print(f"feasible      :       [ ]")
-        else:
-            print(f"feasible      :       [X]")
+        if self.verbose == True:
+            # Assume feasible=True means that the design is feasible
+            print("\n=== function_call ===")
+            for i, obj in enumerate(objectives, 1):
+                print(f"f{i}     :       {obj:.2f}")
+            if feasible:
+                print(f"feasible      :       [ ]")
+            else:
+                print(f"feasible      :       [X]")
 
         return feasible, objectives
 
-    def seeding(self, seed):
+    def _seeding(self, seed):
         '''
             WARNING:
             this function was written by claude
@@ -237,6 +245,7 @@ class LazyOpt():
                     else:
                         # Assume feasible if not provided
                         self.feasible.append(True)
+                    self.iteration_numbers.append(0)
 
                 # Create f_seed array from feasible values
                 self.f_seed = np.array(self.feasible[-n_seeds:]).reshape(-1, 1)
@@ -261,6 +270,7 @@ class LazyOpt():
 
                 self.objectives.append(obj_vals)
                 self.feasible.append(assume_feasible or True)
+                self.iteration_numbers.append(0)
 
             self.x_seed = np.array(x_list)
             self.f_seed = np.array(self.feasible[-n_seeds:]).reshape(-1, 1)
@@ -278,28 +288,33 @@ class LazyOpt():
                 # Evaluate each seed to get objectives
                 for i in range(n_seeds):
                     seed_i = seed[i:i+1, :]  # (1, dims)
-                    feasible, obj_tuple = self.function_call(seed_i)
+                    feasible, obj_tuple = self._function_call(seed_i)
 
                     self.feasible.append(feasible)
+                    self.iteration_numbers.append(0)
                     self.objectives.append(obj_tuple)
                     f_seed_list.append(feasible)
-                    print(f'seeding {i + 1}/{n_seeds}')
+                    if self.verbose:
+                        print(f'seeding {i + 1}/{n_seeds}')
             else:
                 # Assume all seeds are feasible, but still need to evaluate for objectives
                 for i in range(n_seeds):
                     seed_i = seed[i:i+1, :]
-                    feasible, obj_tuple = self.function_call(seed_i)
+                    feasible, obj_tuple = self._function_call(seed_i)
 
                     # Override feasible to True
                     self.feasible.append(True)
+                    self.iteration_numbers.append(0)
                     self.objectives.append(obj_tuple)
                     f_seed_list.append(True)
-                    print(f'seeding {i + 1}/{n_seeds} (assumed feasible)')
+                    if self.verbose:
+                        print(f'seeding {i + 1}/{n_seeds} (assumed feasible)')
 
             self.f_seed = np.array(f_seed_list).reshape(-1, 1)
+            print(f'seeded {n_seeds}')
         return
 
-    def scope_bounds(self, input, bounds):
+    def _scope_bounds(self, input, bounds):
         # input: (N, dims) in [0, 1]
         # bounds: list of length 2*dims → [a1, b1, a2, b2, ..., ad, bd]
         dims = self.hyper_params[6]
@@ -310,7 +325,7 @@ class LazyOpt():
             scaled_input[:, i] = input[:, i] * (b - a) + a
         return scaled_input
 
-    def grid_discretize(self, res, bounds):
+    def _grid_discretize(self, res, bounds):
         dims = self.hyper_params[6]
 
         # Total number of samples = res^dims
@@ -322,7 +337,7 @@ class LazyOpt():
         xxx_ = sampler.random(n=num_points)
 
         # Scale to real bounds
-        xxx = self.scope_bounds(xxx_, bounds)
+        xxx = self._scope_bounds(xxx_, bounds)
 
         # Return normalized and scaled versions
         return xxx, xxx_
@@ -332,39 +347,85 @@ class LazyOpt():
         f_hat_pred = reshape(f_hat_pred_, (-1, 1))
         return f_hat_pred
 
-    def sampling(self, number_of_samples, bounds):
+    def _sampling(self, number_of_samples, bounds):
         dims = self.hyper_params[6]
         sampler = qmc.LatinHypercube(d=dims)
         space_ = sampler.random(n=number_of_samples)
-        space = self.scope_bounds(space_, bounds)
+        space = self._scope_bounds(space_, bounds)
 
         x = empty([number_of_samples, dims])
         f = empty([number_of_samples, 1])
         for i in range(0, number_of_samples):
             x[i, :] = space[i, :]
-            f[i, :], f1 = self.function_call(array([x[i, :]]))
+            f[i, :], f1 = self._function_call(array([x[i, :]]))
             self.feasible.append(f[i, :])
+            self.iteration_numbers.append(0)
             self.objectives.append(f1)
-            print(f'sampling {i + 1}/{number_of_samples}')
+            if self.verbose:
+                print(f'sampling {i + 1}/{number_of_samples}')
+
+        print(f'sampled {number_of_samples}')
         return x, f
 
-    def create_surrogate(self, x, f, surr):
-        f_hat = self.supervised_training_lite(x, f, surr)
+    def _create_surrogate(self, x, f, surr):
+        f_hat = self._supervised_training_lite(x, f, surr)
         return f_hat
 
-    def supervised_training_lite(self, x, f, model='KNN'):
-        if model == 'KNN':
+    def _make_faiss_classifier(self):
+        class FaissClassifier:
+            def fit(self, x, y):
+                x = np.array(x, dtype=np.float32)
+                self.labels_ = np.array(y)
+                self.index_ = faiss.IndexFlatL2(x.shape[1])
+                self.index_.add(x)
+                return self
+
+            def predict(self, x):
+                x = np.array(x, dtype=np.float32)
+                _, indices = self.index_.search(x, k=1)
+                return self.labels_[indices[:, 0]]
+
+        return FaissClassifier()
+
+    def _make_hnswlib_classifier(self):
+        import hnswlib
+
+        class HNSWClassifier:
+            def fit(self, x, y):
+                x = np.array(x, dtype=np.float32)
+                self.labels_ = np.array(y)
+                self.index_ = hnswlib.Index(space='l2', dim=x.shape[1])
+                self.index_.init_index(max_elements=x.shape[0], ef_construction=200, M=16)
+                self.index_.add_items(x, np.arange(x.shape[0]))
+                self.index_.set_ef(50)
+                return self
+
+            def predict(self, x):
+                x = np.array(x, dtype=np.float32)
+                indices, _ = self.index_.knn_query(x, k=1)
+                return self.labels_[indices[:, 0]]
+
+        return HNSWClassifier()
+
+    def _supervised_training_lite(self, x, f, model='KNN'):
+        if model.lower() == 'knn':
             k = 1
             f_hat = KNeighborsClassifier(n_neighbors=k)
             f_hat.fit(x, f.ravel())
-        elif model == 'SVM':
+        elif model.lower() == 'svm':
             f_hat = svm.SVC(kernel='rbf')
             f_hat.fit(x, f.ravel())
+        elif model.lower() == 'faiss':
+            f_hat = self._make_faiss_classifier()
+            f_hat.fit(x, f.ravel())
+        elif model.lower() == 'hnswlib':
+            f_hat = self._make_hnswlib_classifier()
+            f_hat.fit(x, f.ravel())
         else:
-            raise ValueError('Classification surrogate model is not supported! only use "KNN" or "SVM"')
+            raise ValueError('Classification surrogate model is not supported! only use "KNN", "SVM", "faiss", or "hnswlib"')
         return f_hat
 
-    def normalise_inputs(self, x):
+    def _normalise_inputs(self, x):
         # """Normalise each column of x to [0,1]."""
         # mins = np.min(x, axis=0)
         # maxs = np.max(x, axis=0)
@@ -383,7 +444,7 @@ class LazyOpt():
         return x_normalized
         # small epsilon to avoid divide-by-zero
 
-    def set_bounds(self, bounds):
+    def _set_bounds(self, bounds):
         """
         Set optimization bounds in multiple formats.
         WARNING: this function is written with claude
@@ -466,7 +527,7 @@ class LazyOpt():
             "  - Flat list: [0, 1, -5, 5]"
         )
 
-    def run_lazy_opt(self):
+    def _run_lazy_opt(self):
         surr = self.hyper_params[0]
         epsilon = self.hyper_params[1]
         number_of_samples = self.hyper_params[2]
@@ -483,8 +544,8 @@ class LazyOpt():
         x_seed = self.x_seed
         f_seed = self.f_seed
 
-        xxx, xxx_ = self.grid_discretize(res, bounds)
-        x_sample, f_sample = self.sampling(number_of_samples, bounds)
+        xxx, xxx_ = self._grid_discretize(res, bounds)
+        x_sample, f_sample = self._sampling(number_of_samples, bounds)
 
         if len(x_seed) > 0:
             x = vstack((x_seed, x_sample))
@@ -495,7 +556,7 @@ class LazyOpt():
 
         print(f'\nNumber of Hits from Sampling Found: {count_nonzero(f)}')
 
-        x_ = self.normalise_inputs(x)
+        x_ = self._normalise_inputs(x)
 
         # create multiprocessing pool
         pool = None
@@ -512,9 +573,13 @@ class LazyOpt():
         iter = 0
 
         start = time.time()
-        while 1:
-            f_hat = self.create_surrogate(x_, f, surr)
+        for iter in range(iter_max + 1):
+            f_hat = self._create_surrogate(x_, f, surr)
             f_hat_pred = self.predict(f_hat, xxx_)
+
+
+            # f_hat_pred_ = f_hat.predict(x)
+            # f_hat_pred = reshape(f_hat_pred_, (-1, 1))
 
             b = f_hat_pred
             a = array(logical_not(f_hat_pred), dtype='float64')
@@ -527,15 +592,17 @@ class LazyOpt():
                 x = np.vstack((x, x_star.reshape(1, -1)))
 
                 # normalise x vec
-                x_ = self.normalise_inputs(x)
+                x_ = self._normalise_inputs(x)
 
                 # Evaluate new point
-                f_star, f1 = self.function_call(x_star.reshape(1, -1))
+                f_star, f1 = self._function_call(x_star.reshape(1, -1))
                 self.feasible.append(f_star)
+                self.iteration_numbers.append(iter + 1)
                 self.objectives.append(f1)
 
                 f = np.vstack((f, np.array(f_star).reshape(1, -1)))
-                print(f'infill function call: iter {iter}')
+                if self.verbose:
+                    print(f'infill function call: iter {iter}')
             else:
                 top_n_indices = np.argsort(alpha.ravel())[-threads:][::-1]  # descending order
                 x_stars = xxx[top_n_indices, :]  # shape (threads, dims)
@@ -543,24 +610,26 @@ class LazyOpt():
                 x = np.vstack((x, x_stars))
 
                 # normalise x vec
-                x_ = self.normalise_inputs(x)
+                x_ = self._normalise_inputs(x)
 
                 # Prepare inputs: list of arrays, each shape (1, dims)
                 inputs = [x_stars[i:i + 1, :] for i in range(threads)]
 
                 # Evaluate all x_star points in parallel
-                results = pool.map(self.function_call, inputs)
+                results = pool.map(self._function_call, inputs)
 
                 # Unpack results and append to lists
                 # results is a list of tuples: [(f_star_0, f1_0), (f_star_1, f1_1), ...]
                 f_stars = []
                 for f_star, f1 in results:
                     self.feasible.append(f_star)
+                    self.iteration_numbers.append(iter + 1)
                     self.objectives.append(f1)
                     f_stars.append(f_star)
                 # Stack all results
                 f = np.vstack((f, np.array(f_stars).reshape(-1, 1)))
-                print(f'infill function calls: iter {iter}, evaluated {threads} points in parallel')
+                if self.verbose:
+                    print(f'infill function calls: iter {iter}, evaluated {threads} points in parallel')
 
             if iter >= iter_max:
                 break
@@ -574,7 +643,8 @@ class LazyOpt():
             self.f = f
 
             end = time.time()
-            print(f'time for iter: {end-start}s')
+            if self.verbose:
+                print(f'time for iter: {end-start}s')
             if plot_boolean:
                 plot_live(x, f, x_, xxx_, self.objectives)
 
@@ -587,7 +657,7 @@ class LazyOpt():
         self.x = x
         self.f = f
         # the old f_hat is trained on 1 less point that is appended at the end of the loop
-        f_hat = self.supervised_training_lite(x_, f, model='KNN')
+        f_hat = self._create_surrogate(x_, f, surr)
         self.f_hat = f_hat
         self.x_ = x_
         self.xxx_ = xxx_
